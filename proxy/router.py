@@ -5,10 +5,318 @@ from typing import List, Dict, Any, Optional, Tuple
 import tiktoken
 import litellm
 from litellm import Router
+from litellm.integrations.custom_logger import CustomLogger
 
 from .config import ProxyConfig, ModelEndpointConfig
 
 logger = logging.getLogger("proxy.router")
+
+from litellm.proxy.guardrails.guardrail_hooks.presidio import _OPTIONAL_PresidioPIIMasking
+
+class LocalPresidioPIIMasking(_OPTIONAL_PresidioPIIMasking):
+    """
+    Local, stateless implementation of LiteLLM's standard Presidio PII Masking guardrail.
+    Inherits natively from _OPTIONAL_PresidioPIIMasking and overrides HTTP calls
+    to execute locally using presidio-analyzer and presidio-anonymizer.
+    """
+    def __init__(self, router, **kwargs):
+        # Prevent base class validation from throwing missing URL exceptions
+        kwargs.setdefault("presidio_analyzer_api_base", "http://localhost:5002/")
+        kwargs.setdefault("presidio_anonymizer_api_base", "http://localhost:5001/")
+        kwargs.setdefault("output_parse_pii", True)
+        kwargs.setdefault("guardrail_name", "presidio-pii")
+        
+        super().__init__(**kwargs)
+        self.router = router
+        
+        # Initialize local Presidio engines
+        from presidio_analyzer import AnalyzerEngine
+        from presidio_anonymizer import AnonymizerEngine
+        self.analyzer = AnalyzerEngine()
+        self.anonymizer = AnonymizerEngine()
+        
+        # Dynamically register custom regex patterns from configuration
+        self._register_custom_rules()
+
+    def validate_environment(self, **kwargs):
+        # Overridden to prevent requiring external base URLs in environment
+        self.presidio_analyzer_api_base = "http://localhost:5002/"
+        self.presidio_anonymizer_api_base = "http://localhost:5001/"
+
+    def _register_custom_rules(self):
+        """Registers user-defined config regex rules dynamically into Presidio's native recognizer registry."""
+        from presidio_analyzer import PatternRecognizer, Pattern
+        pii_settings = getattr(self.router.config, "pii_shield_settings", None)
+        if not pii_settings:
+            return
+            
+        custom_rules = pii_settings.custom_regex_rules
+        for idx, rule in enumerate(custom_rules, 1):
+            rule_name = rule.get("name", f"CUSTOM_RULE_{idx}")
+            pattern_str = rule.get("pattern", "")
+            if pattern_str:
+                try:
+                    # Map common name rules to PERSON, others to custom uppercase entity types
+                    entity_type = "PERSON" if rule_name in ["Sanvi", "Jain"] else rule_name.upper()
+                    
+                    custom_pattern = Pattern(
+                        name=f"{rule_name.lower()}_pattern",
+                        regex=pattern_str,
+                        score=1.0
+                    )
+                    custom_recognizer = PatternRecognizer(
+                        supported_entity=entity_type,
+                        patterns=[custom_pattern]
+                    )
+                    self.analyzer.registry.add_recognizer(custom_recognizer)
+                    logger.info(f"Registered local Presidio PatternRecognizer: '{rule_name}' with pattern '{pattern_str}' -> entity '{entity_type}'")
+                except Exception as e:
+                    logger.error(f"Failed to register local Presidio PatternRecognizer for '{rule_name}': {e}")
+
+    async def analyze_text(
+        self,
+        text: str,
+        presidio_config: Optional[Any] = None,
+        request_data: Optional[dict] = None,
+    ) -> List[Dict[str, Any]]:
+        """Scans prompt text using local Presidio Analyzer, resolves overlaps, and returns list of matches."""
+        if not text or not text.strip():
+            return []
+            
+        pii_settings = getattr(self.router.config, "pii_shield_settings", None)
+        active_entities = pii_settings.entities if pii_settings else ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"]
+        
+        # Analyze locally
+        results = self.analyzer.analyze(
+            text=text,
+            language=self.presidio_language,
+            entities=active_entities
+        )
+        
+        # Format results as expected by _OPTIONAL_PresidioPIIMasking
+        matches = [
+            {
+                "entity_type": res.entity_type,
+                "start": res.start,
+                "end": res.end,
+                "score": res.score,
+            }
+            for res in results
+        ]
+        
+        # Resolve overlaps (keep only non-overlapping matches with highest score/length)
+        matches.sort(key=lambda x: (x["start"], -(x["end"] - x["start"])))
+        non_overlapping = []
+        last_end = 0
+        for match in matches:
+            if match["start"] >= last_end:
+                non_overlapping.append(match)
+                last_end = match["end"]
+                
+        return non_overlapping
+
+    async def _post_presidio_anonymize(self, text: str, analyze_results: Any) -> Dict[str, Any]:
+        """Anonymizes text using local Presidio AnonymizerEngine."""
+        from presidio_analyzer import RecognizerResult
+        
+        results = []
+        for d in analyze_results:
+            r = RecognizerResult(
+                entity_type=d["entity_type"],
+                start=d["start"],
+                end=d["end"],
+                score=d.get("score", 1.0)
+            )
+            results.append(r)
+            
+        anonymized_result = self.anonymizer.anonymize(text=text, analyzer_results=results)
+        
+        items = []
+        for x in anonymized_result.items:
+            items.append({
+                "entity_type": x.entity_type,
+                "start": x.start,
+                "end": x.end
+            })
+            
+        return {
+            "text": anonymized_result.text,
+            "items": items
+        }
+
+    def shield_text(self, text: str, request_data: dict) -> str:
+        """Synchronously redacts and numbers PII tokens. Used primarily for sandbox mock completions."""
+        if not text or not text.strip():
+            return text
+            
+        pii_settings = getattr(self.router.config, "pii_shield_settings", None)
+        if pii_settings and not pii_settings.enabled:
+            return text
+            
+        active_entities = pii_settings.entities if pii_settings else ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"]
+        
+        results = self.analyzer.analyze(
+            text=text,
+            language=self.presidio_language,
+            entities=active_entities
+        )
+        
+        dict_results = [
+            {
+                "entity_type": res.entity_type,
+                "start": res.start,
+                "end": res.end,
+                "score": res.score,
+            }
+            for res in results
+        ]
+        
+        # Resolve overlaps
+        dict_results.sort(key=lambda x: (x["start"], -(x["end"] - x["start"])))
+        non_overlapping = []
+        last_end = 0
+        for match in dict_results:
+            if match["start"] >= last_end:
+                non_overlapping.append(match)
+                last_end = match["end"]
+        
+        masked_entity_count = {}
+        # Apply standard LiteLLM numbered replacement and mapping
+        return self._finalize_presidio_anonymize_numbered_tokens(
+            text=text,
+            analyze_results=non_overlapping,
+            request_data=request_data,
+            masked_entity_count=masked_entity_count
+        )
+
+    def unmask_text(self, text: str, request_data: dict) -> str:
+        """Synchronously restores raw PII values into redacted text."""
+        metadata = request_data.get("metadata", {}) if request_data else {}
+        pii_tokens = metadata.get("pii_tokens", {})
+        if not text or not pii_tokens:
+            return text
+            
+        return self._unmask_pii_text(text, pii_tokens)
+
+    def _finalize_presidio_anonymize_numbered_tokens(
+        self,
+        text: str,
+        analyze_results: Any,
+        request_data: Optional[Dict],
+        masked_entity_count: Dict[str, int],
+    ) -> str:
+        """Overrides base class method to implement per-type counter token numbering (e.g. <PERSON_1>)."""
+        new_text = text
+        if request_data is None:
+            request_data = {}
+        if not request_data.get("metadata"):
+            request_data["metadata"] = {}
+        if "pii_tokens" not in request_data["metadata"]:
+            request_data["metadata"]["pii_tokens"] = {}
+        pii_tokens = request_data["metadata"]["pii_tokens"]
+
+        # Sort detections by start position forward
+        sorted_forward = sorted(analyze_results, key=lambda x: x["start"])
+        
+        # Keep per-type counters
+        type_counters = {}
+        seq_map = {}
+        
+        for ar in sorted_forward:
+            etype = ar["entity_type"]
+            if etype not in type_counters:
+                type_counters[etype] = 1
+            seq_map[(ar["start"], ar["end"])] = type_counters[etype]
+            type_counters[etype] += 1
+
+        # Replace in reverse order to keep positions intact
+        for ar in reversed(sorted_forward):
+            start = ar["start"]
+            end = ar["end"]
+            entity_type = ar["entity_type"]
+            seq = seq_map[(start, end)]
+            replacement = f"<{entity_type}_{seq}>"
+            
+            pii_tokens[replacement] = text[start:end]
+            new_text = new_text[:start] + replacement + new_text[end:]
+            masked_entity_count[entity_type] = masked_entity_count.get(entity_type, 0) + 1
+            
+        return new_text
+
+    def log_pre_api_call(self, model: str, messages: List[Dict[str, str]], kwargs: Dict[str, Any]):
+        """
+        Interceptive pre-call hook invoked natively by LiteLLM completion/router.
+        Masks user prompt in-place and saves transient PII tokens in the request metadata.
+        """
+        pii_settings = getattr(self.router.config, "pii_shield_settings", None)
+        if not pii_settings or not pii_settings.enabled:
+            return
+
+        # Prepare request-scoped metadata
+        if "metadata" not in kwargs or not isinstance(kwargs["metadata"], dict):
+            kwargs["metadata"] = {}
+        if "pii_tokens" not in kwargs["metadata"]:
+            kwargs["metadata"]["pii_tokens"] = {}
+        
+        pii_redacted = False
+        
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "user" and content:
+                # Anonymize user messages using local helper
+                sanitized_content = self.shield_text(content, kwargs)
+                if sanitized_content != content:
+                    pii_redacted = True
+                    msg["content"] = sanitized_content
+
+        if pii_redacted:
+            placeholders = list(kwargs["metadata"]["pii_tokens"].keys())
+            self.router.log_event(
+                f"[PII Guardrail Callback] Natively redacted PII pre-call. Placeholders: {placeholders}", 
+                "warning"
+            )
+
+    def log_success_event(self, kwargs: Dict[str, Any], response_obj: Any, start_time: Any, end_time: Any):
+        """Synchronous success hook. Restores raw PII values back into the response."""
+        self._unmask_response(kwargs, response_obj)
+
+    async def async_log_success_event(self, kwargs: Dict[str, Any], response_obj: Any, start_time: Any, end_time: Any):
+        """Asynchronous success hook. Restores raw PII values back into the response."""
+        self._unmask_response(kwargs, response_obj)
+
+    def _unmask_response(self, kwargs: Dict[str, Any], response_obj: Any):
+        """Parses completion response and restores raw user values using in-memory metadata."""
+        metadata = kwargs.get("metadata", {}) if kwargs else {}
+        if not metadata or not isinstance(metadata, dict):
+            return
+            
+        pii_tokens = metadata.get("pii_tokens")
+        if not pii_tokens:
+            return
+
+        try:
+            choices = getattr(response_obj, "choices", [])
+            replaced_count = 0
+            for choice in choices:
+                msg = getattr(choice, "message", None)
+                if msg:
+                    content = getattr(msg, "content", "")
+                    if content:
+                        restored_content = self.unmask_text(content, kwargs)
+                        if restored_content != content:
+                            msg.content = restored_content
+                            for placeholder in pii_tokens.keys():
+                                if placeholder in content:
+                                    replaced_count += 1
+                                    
+            if replaced_count > 0:
+                self.router.log_event(
+                    f"[PII De-anonymizer Callback] Natively restored {replaced_count} placeholders in response choice.", 
+                    "success"
+                )
+        except Exception as e:
+            logger.error(f"Error during native callback de-anonymization: {e}")
 
 class LiteLLMProxyRouter:
     """
@@ -59,8 +367,11 @@ class LiteLLMProxyRouter:
             logger.warning(f"Failed to initialize tiktoken, falling back to character approximation: {e}")
             self.tokenizer = None
 
-        # Initialize Custom PII Shielding Engine (with Robust Regex Fallback)
-        self._init_pii_engines()
+        # Register local Presidio PII Guardrail natively in LiteLLM callbacks
+        self.pii_guardrail_callback = LocalPresidioPIIMasking(router=self)
+        if self.pii_guardrail_callback not in litellm.callbacks:
+            litellm.callbacks.append(self.pii_guardrail_callback)
+
         self.log_event("Class-based LiteLLM Proxy online. Load balancer initialized.", "routing")
 
     def log_event(self, message: str, type: str = "routing"):
@@ -122,173 +433,14 @@ class LiteLLMProxyRouter:
             total += self.estimate_tokens(content) + self.estimate_tokens(role) + 4
         return total + 2 # overhead
 
-    def _init_pii_engines(self):
-        """Attempts to initialize Presidio engines, falling back gracefully to a custom Regex engine."""
-        self.analyzer = None
-        self.anonymizer = None
-        self.presidio_available = False
-        
-        try:
-            from presidio_analyzer import AnalyzerEngine
-            from presidio_anonymizer import AnonymizerEngine
-            self.analyzer = AnalyzerEngine()
-            self.anonymizer = AnonymizerEngine()
-            self.presidio_available = True
-            logger.info("Local PII Guardrail: Microsoft Presidio initialized successfully.")
-        except Exception as e:
-            logger.warning(
-                f"Local PII Guardrail: Presidio/SpaCy model missing, "
-                f"gracefully falling back to high-fidelity Regex engine. Details: {e}"
-            )
-
     def shield_prompt_payload_reversible(self, text_content: str) -> Tuple[str, Dict[str, str]]:
         """
-        Scans and redacts Names, SSNs, Phone Numbers, and Emails locally.
-        Combines semantic Microsoft Presidio shielding with a config-driven Regex scanner.
-        Returns the sanitized string and the request-scoped de-anonymization mapping.
+        Wrapper to route prompt shielding to the native LocalPresidioPIIMasking callback.
         """
-        if not text_content:
-            return "", {}
-
-        # If shielding is disabled in configuration, return raw input
-        pii_settings = getattr(self.config, "pii_shield_settings", None)
-        if pii_settings and not pii_settings.enabled:
-            return text_content, {}
-
-        entities = []
-        active_entities = pii_settings.entities if pii_settings else ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"]
-
-        # 1. Primary Engine: Microsoft Presidio
-        if self.presidio_available and self.analyzer:
-            try:
-                # Filter active entities to those natively supported by Presidio
-                supported_entities = ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS", "CREDIT_CARD", "CRYPTO", "DATE_TIME", "IP_ADDRESS", "LOCATION", "NRP", "MEDICAL_LICENSE", "URL"]
-                presidio_entities = [e for e in active_entities if e in supported_entities]
-                
-                if presidio_entities:
-                    results = self.analyzer.analyze(
-                        text=text_content, 
-                        language="en", 
-                        entities=presidio_entities
-                    )
-                    for result in results:
-                        standard_type = result.entity_type
-                        val = text_content[result.start:result.end]
-                        entities.append({
-                            "start": result.start,
-                            "end": result.end,
-                            "entity_type": standard_type,
-                            "value": val
-                        })
-            except Exception as e:
-                logger.error(f"Presidio shielding failed dynamically: {e}")
-
-        # 2. Config-Driven & Standard Regex-Based Sanitization
-        import re
-
-        # Standard Email pattern matching (if enabled)
-        if "EMAIL_ADDRESS" in active_entities:
-            email_pattern = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]*[a-zA-Z0-9]')
-            for match in email_pattern.finditer(text_content):
-                entities.append({
-                    "start": match.start(),
-                    "end": match.end(),
-                    "entity_type": "EMAIL_ADDRESS",
-                    "value": match.group()
-                })
-
-        # Standard US SSN pattern matching (if enabled)
-        if "US_SSN" in active_entities:
-            ssn_pattern = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
-            for match in ssn_pattern.finditer(text_content):
-                entities.append({
-                    "start": match.start(),
-                    "end": match.end(),
-                    "entity_type": "US_SSN",
-                    "value": match.group()
-                })
-
-        # Standard Phone Number pattern matching (if enabled)
-        if "PHONE_NUMBER" in active_entities:
-            phone_pattern = re.compile(r'\b\+?\d{1,4}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b')
-            for match in phone_pattern.finditer(text_content):
-                entities.append({
-                    "start": match.start(),
-                    "end": match.end(),
-                    "entity_type": "PHONE_NUMBER",
-                    "value": match.group()
-                })
-
-        # Custom user-defined regex rules loaded from the configuration
-        custom_rules = pii_settings.custom_regex_rules if pii_settings else []
-        for rule in custom_rules:
-            rule_name = rule.get("name", "PERSON")
-            etype = "PERSON" if rule_name in ["Sanvi", "Jain"] else rule_name.upper()
-            pattern_str = rule.get("pattern", "")
-            if pattern_str:
-                try:
-                    pat = re.compile(pattern_str, re.IGNORECASE)
-                    for match in pat.finditer(text_content):
-                        entities.append({
-                            "start": match.start(),
-                            "end": match.end(),
-                            "entity_type": etype,
-                            "value": match.group()
-                        })
-                except Exception as re_err:
-                    logger.error(f"Failed to compile custom regex rule '{rule_name}': {re_err}")
-
-        # 3. Resolve overlaps
-        # Sort by start index ascending, and length descending
-        entities.sort(key=lambda x: (x["start"], -(x["end"] - x["start"])))
-
-        non_overlapping = []
-        last_end = 0
-        for ent in entities:
-            if ent["start"] >= last_end:
-                non_overlapping.append(ent)
-                last_end = ent["end"]
-
-        # 4. Generate placeholders and rebuild string (right to left)
-        # Sort non_overlapping by start index descending
-        non_overlapping.sort(key=lambda x: x["start"], reverse=True)
-
-        sanitized = text_content
-        pii_map = {}
-        type_counters = {
-            "PERSON": 1,
-            "US_SSN": 1,
-            "PHONE_NUMBER": 1,
-            "EMAIL_ADDRESS": 1
-        }
-        value_to_placeholder = {}
-
-        for ent in non_overlapping:
-            val = ent["value"]
-            etype = ent["entity_type"]
-            if etype not in type_counters:
-                etype = "PERSON"
-
-            # Check if we already assigned a placeholder to this exact value (case-insensitive for emails)
-            normalized_val = val.strip()
-            key = (etype, normalized_val.lower() if etype in ["EMAIL_ADDRESS"] else normalized_val)
-
-            if key not in value_to_placeholder:
-                placeholder = f"<{etype}_{type_counters[etype]}>"
-                type_counters[etype] += 1
-                value_to_placeholder[key] = placeholder
-                pii_map[placeholder] = val
-            else:
-                placeholder = value_to_placeholder[key]
-                if placeholder not in pii_map:
-                    pii_map[placeholder] = val
-
-            # Replace in sanitized string
-            start = ent["start"]
-            end = ent["end"]
-            sanitized = sanitized[:start] + placeholder + sanitized[end:]
-
-        return sanitized, pii_map
+        request_data = {"metadata": {}}
+        sanitized = self.pii_guardrail_callback.shield_text(text_content, request_data)
+        pii_tokens = request_data["metadata"].get("pii_tokens", {})
+        return sanitized, pii_tokens
 
     def shield_prompt_payload(self, text_content: str) -> str:
         """
@@ -302,48 +454,8 @@ class LiteLLMProxyRouter:
         Restores raw PII values back into the assistant response content.
         Uses exact placeholder replacement.
         """
-        if not text or not pii_map:
-            return text
-        
-        restored = text
-        for placeholder, original_value in pii_map.items():
-            restored = restored.replace(placeholder, original_value)
-            
-        return restored
-
-    def de_anonymize_response(self, response: Dict[str, Any], pii_map: Dict[str, str]) -> Dict[str, Any]:
-        """
-        Parses response content and restores PII values.
-        Logs telemetry information.
-        """
-        if not pii_map or not response:
-            return response
-            
-        try:
-            choices = response.get("choices", [])
-            replaced_count = 0
-            for choice in choices:
-                msg = choice.get("message", {})
-                content = msg.get("content", "")
-                if content:
-                    restored_content = self.restore_pii_content(content, pii_map)
-                    if restored_content != content:
-                        msg["content"] = restored_content
-                        # Let's count how many placeholders were restored
-                        for placeholder in pii_map.keys():
-                            if placeholder in content:
-                                replaced_count += 1
-                                
-            if replaced_count > 0:
-                self.log_event(
-                    f"[PII De-anonymizer] Mapped {replaced_count} placeholders back in response for user convenience.", 
-                    "success"
-                )
-        except Exception as e:
-            logger.error(f"Error during de-anonymization: {e}")
-            
-        return response
-
+        request_data = {"metadata": {"pii_tokens": pii_map}}
+        return self.pii_guardrail_callback.unmask_text(text, request_data)
     def classify_prompt_complexity(self, messages: List[Dict[str, str]], required_context: int) -> str:
         """
         Classifies prompt complexity into 'low', 'medium', or 'high' based on:
@@ -404,24 +516,42 @@ class LiteLLMProxyRouter:
         with self.metrics_lock:
             self.metrics["total_requests"] += 1
 
-        # 1. Local PII Shielding (Reversible)
+        # 1. Local PII Shielding (Reversible / Native Guardrail Callbacks)
         sanitized_messages = []
         pii_redacted = False
-        global_pii_map = {}
-        for msg in messages:
-            content = msg.get("content", "")
-            role = msg.get("role", "")
-            if role == "user":
-                sanitized_content, request_pii_map = self.shield_prompt_payload_reversible(content)
-                if sanitized_content != content:
-                    pii_redacted = True
-                    global_pii_map.update(request_pii_map)
-                sanitized_messages.append({"role": role, "content": sanitized_content})
+        sandbox_request_data = {"metadata": {}}
+        
+        # Check if the guardrail is enabled in config
+        pii_settings = getattr(self.config, "pii_shield_settings", None)
+        pii_enabled = pii_settings.enabled if pii_settings else False
+        
+        # Determine early if the request is running in mock sandbox mode
+        endpoints = self.config.get_endpoints_for_model(model)
+        is_mock_early = (
+            kwargs.get("mock_sandbox", False) or 
+            (endpoints and endpoints[0].api_key and "mock" in endpoints[0].api_key.lower())
+        )
+        
+        if is_mock_early:
+            if pii_enabled:
+                for msg in messages:
+                    content = msg.get("content", "")
+                    role = msg.get("role", "")
+                    if role == "user":
+                        sanitized_content = self.pii_guardrail_callback.shield_text(content, sandbox_request_data)
+                        if sanitized_content != content:
+                            pii_redacted = True
+                        sanitized_messages.append({"role": role, "content": sanitized_content})
+                    else:
+                        sanitized_messages.append(msg)
+                if pii_redacted:
+                    placeholders = list(sandbox_request_data["metadata"]["pii_tokens"].keys())
+                    self.log_event(f"[PII Shield] Sensitive information detected and redacted locally (Sandbox Mock). Placeholders: {placeholders}", "warning")
             else:
-                sanitized_messages.append(msg)
-
-        if pii_redacted:
-            self.log_event(f"[PII Shield] Sensitive information detected and redacted locally. Placeholders: {list(global_pii_map.keys())}", "warning")
+                sanitized_messages = [m.copy() for m in messages]
+        else:
+            # Real LLM calls let LiteLLM's native callback handle PII masking in-place during pre-call log hooks
+            sanitized_messages = [m.copy() for m in messages]
 
         estimated_prompt_tokens = self.estimate_request_tokens(sanitized_messages)
         max_tokens = kwargs.get("max_tokens", 1000)
@@ -540,7 +670,16 @@ class LiteLLMProxyRouter:
                 messages=sanitized_messages
             )
             response["prompt_complexity"] = complexity
-            response = self.de_anonymize_response(response, global_pii_map)
+            if pii_enabled:
+                choices = response.get("choices", [])
+                for choice in choices:
+                    msg = choice.get("message", {})
+                    content = msg.get("content", "")
+                    if content:
+                        restored = self.pii_guardrail_callback.unmask_text(content, sandbox_request_data)
+                        if restored != content:
+                            msg["content"] = restored
+                            self.log_event(f"[PII De-anonymizer] Mapped placeholders back in sandbox response choice.", "success")
             return response
 
         # Real API Execution via LiteLLM Router - directly let LITELLM route the model!
@@ -585,7 +724,6 @@ class LiteLLMProxyRouter:
             except Exception:
                 pass
             
-            response = self.de_anonymize_response(response, global_pii_map)
             return response
             
         except Exception as e:
@@ -633,7 +771,6 @@ class LiteLLMProxyRouter:
                     except Exception:
                         pass
                     
-                    response = self.de_anonymize_response(response, global_pii_map)
                     return response
                     
                 except Exception as ex:
