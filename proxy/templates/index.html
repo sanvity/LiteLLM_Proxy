@@ -544,6 +544,18 @@
                     </div>
                 </div>
 
+                <!-- Active Shielded PII Section -->
+                <div style="background: rgba(6, 182, 212, 0.03); border: 1px solid rgba(6, 182, 212, 0.12); padding: 0.75rem; border-radius: 8px; margin-bottom: 0.75rem;">
+                    <div class="stat-title" style="color: var(--glow-cyan); margin-bottom: 0.35rem; display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem;">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                        PII Shielding Guardrail
+                    </div>
+                    <div id="pii-status-text" style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 0.35rem;">Dynamic Reversible Mapping Enabled</div>
+                    <div id="pii-entities-badges" style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+                        <!-- dynamically populated -->
+                    </div>
+                </div>
+
                 <div class="stat-title" style="margin-bottom: 0.25rem;">Active Backend Nodes</div>
                 <div class="providers-container" id="providers-list">
                     <div style="text-align: center; color: var(--text-muted); font-size: 0.75rem; padding: 1rem 0;">
@@ -611,6 +623,42 @@
                 
                 const rate = m.total_requests ? Math.round((m.successful_requests / m.total_requests) * 100) : 100;
                 document.getElementById('metric-rate').innerText = `${rate}%`;
+
+                // Update PII Shielding badges
+                const piiSettings = data.pii_shield_settings;
+                const piiBadges = document.getElementById('pii-entities-badges');
+                const piiStatus = document.getElementById('pii-status-text');
+                if (piiSettings && piiBadges) {
+                    piiBadges.innerHTML = '';
+                    if (piiSettings.enabled) {
+                        piiStatus.innerText = `Dynamic Reversible Mapping Active (${piiSettings.custom_regex_rules.length || 0} custom rules)`;
+                        piiStatus.style.color = 'var(--text-muted)';
+                        
+                        piiSettings.entities.forEach(ent => {
+                            const badge = document.createElement('span');
+                            badge.className = 'badge cyan';
+                            badge.innerText = ent;
+                            piiBadges.appendChild(badge);
+                        });
+                        
+                        piiSettings.custom_regex_rules.forEach(ruleName => {
+                            const badge = document.createElement('span');
+                            badge.className = 'badge purple';
+                            badge.innerText = `REGEX: ${ruleName}`;
+                            piiBadges.appendChild(badge);
+                        });
+                    } else {
+                        piiStatus.innerText = 'PII Shielding Guardrail is currently disabled.';
+                        piiStatus.style.color = 'var(--glow-rose)';
+                        const badge = document.createElement('span');
+                        badge.className = 'badge';
+                        badge.style.background = 'rgba(244, 63, 94, 0.06)';
+                        badge.style.color = 'var(--glow-rose)';
+                        badge.style.borderColor = 'rgba(244, 63, 94, 0.15)';
+                        badge.innerText = 'DISABLED';
+                        piiBadges.appendChild(badge);
+                    }
+                }
 
                 // Stream backend logs to terminal window
                 if (m.logs && m.logs.length > 0) {

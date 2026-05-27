@@ -92,6 +92,7 @@ class LiteLLMProxyApp:
             router_metrics = self.router.get_metrics()
             
             # Enrich with active configuration details
+            pii_settings = getattr(self.config, "pii_shield_settings", None)
             return {
                 "timestamp": time.time(),
                 "metrics": router_metrics,
@@ -99,6 +100,11 @@ class LiteLLMProxyApp:
                     "strategy": self.config.routing_strategy,
                     "retries": self.config.num_retries,
                     "timeout": self.config.timeout
+                },
+                "pii_shield_settings": {
+                    "enabled": pii_settings.enabled if pii_settings else False,
+                    "entities": pii_settings.entities if pii_settings else [],
+                    "custom_regex_rules": [r.get("name") for r in pii_settings.custom_regex_rules] if pii_settings else []
                 },
                 "registered_virtual_models": list(set(e.model_name for e in self.config.endpoints)),
                 "registered_physical_providers": list(set(e.model.split("/")[0] for e in self.config.endpoints))

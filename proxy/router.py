@@ -144,79 +144,99 @@ class LiteLLMProxyRouter:
     def shield_prompt_payload_reversible(self, text_content: str) -> Tuple[str, Dict[str, str]]:
         """
         Scans and redacts Names, SSNs, Phone Numbers, and Emails locally.
-        Combines semantic Microsoft Presidio shielding with a guaranteed Regex scanner.
+        Combines semantic Microsoft Presidio shielding with a config-driven Regex scanner.
         Returns the sanitized string and the request-scoped de-anonymization mapping.
         """
         if not text_content:
             return "", {}
 
+        # If shielding is disabled in configuration, return raw input
+        pii_settings = getattr(self.config, "pii_shield_settings", None)
+        if pii_settings and not pii_settings.enabled:
+            return text_content, {}
+
         entities = []
+        active_entities = pii_settings.entities if pii_settings else ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"]
 
         # 1. Primary Engine: Microsoft Presidio
         if self.presidio_available and self.analyzer:
             try:
-                results = self.analyzer.analyze(
-                    text=text_content, 
-                    language="en", 
-                    entities=["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"]
-                )
-                for result in results:
-                    standard_type = result.entity_type
-                    if standard_type == "PERSON":
-                        standard_type = "PERSON"
-                    elif standard_type == "US_SSN":
-                        standard_type = "US_SSN"
-                    elif standard_type == "PHONE_NUMBER":
-                        standard_type = "PHONE_NUMBER"
-                    elif standard_type == "EMAIL_ADDRESS":
-                        standard_type = "EMAIL_ADDRESS"
-                    
-                    val = text_content[result.start:result.end]
-                    entities.append({
-                        "start": result.start,
-                        "end": result.end,
-                        "entity_type": standard_type,
-                        "value": val
-                    })
+                # Filter active entities to those natively supported by Presidio
+                supported_entities = ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS", "CREDIT_CARD", "CRYPTO", "DATE_TIME", "IP_ADDRESS", "LOCATION", "NRP", "MEDICAL_LICENSE", "URL"]
+                presidio_entities = [e for e in active_entities if e in supported_entities]
+                
+                if presidio_entities:
+                    results = self.analyzer.analyze(
+                        text=text_content, 
+                        language="en", 
+                        entities=presidio_entities
+                    )
+                    for result in results:
+                        standard_type = result.entity_type
+                        val = text_content[result.start:result.end]
+                        entities.append({
+                            "start": result.start,
+                            "end": result.end,
+                            "entity_type": standard_type,
+                            "value": val
+                        })
             except Exception as e:
                 logger.error(f"Presidio shielding failed dynamically: {e}")
 
-        # 2. Dynamic High-Fidelity Regex-Based Sanitization (Guaranteed No Omissions)
+        # 2. Config-Driven & Standard Regex-Based Sanitization
         import re
 
-        email_pattern = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]*[a-zA-Z0-9]')
-        ssn_pattern = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
-        phone_pattern = re.compile(r'\b\+?\d{1,4}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b')
-        names_pattern = re.compile(r'\bSanvi\b|\bJain\b', re.IGNORECASE)
+        # Standard Email pattern matching (if enabled)
+        if "EMAIL_ADDRESS" in active_entities:
+            email_pattern = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]*[a-zA-Z0-9]')
+            for match in email_pattern.finditer(text_content):
+                entities.append({
+                    "start": match.start(),
+                    "end": match.end(),
+                    "entity_type": "EMAIL_ADDRESS",
+                    "value": match.group()
+                })
 
-        for match in email_pattern.finditer(text_content):
-            entities.append({
-                "start": match.start(),
-                "end": match.end(),
-                "entity_type": "EMAIL_ADDRESS",
-                "value": match.group()
-            })
-        for match in ssn_pattern.finditer(text_content):
-            entities.append({
-                "start": match.start(),
-                "end": match.end(),
-                "entity_type": "US_SSN",
-                "value": match.group()
-            })
-        for match in phone_pattern.finditer(text_content):
-            entities.append({
-                "start": match.start(),
-                "end": match.end(),
-                "entity_type": "PHONE_NUMBER",
-                "value": match.group()
-            })
-        for match in names_pattern.finditer(text_content):
-            entities.append({
-                "start": match.start(),
-                "end": match.end(),
-                "entity_type": "PERSON",
-                "value": match.group()
-            })
+        # Standard US SSN pattern matching (if enabled)
+        if "US_SSN" in active_entities:
+            ssn_pattern = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
+            for match in ssn_pattern.finditer(text_content):
+                entities.append({
+                    "start": match.start(),
+                    "end": match.end(),
+                    "entity_type": "US_SSN",
+                    "value": match.group()
+                })
+
+        # Standard Phone Number pattern matching (if enabled)
+        if "PHONE_NUMBER" in active_entities:
+            phone_pattern = re.compile(r'\b\+?\d{1,4}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b')
+            for match in phone_pattern.finditer(text_content):
+                entities.append({
+                    "start": match.start(),
+                    "end": match.end(),
+                    "entity_type": "PHONE_NUMBER",
+                    "value": match.group()
+                })
+
+        # Custom user-defined regex rules loaded from the configuration
+        custom_rules = pii_settings.custom_regex_rules if pii_settings else []
+        for rule in custom_rules:
+            rule_name = rule.get("name", "PERSON")
+            etype = "PERSON" if rule_name in ["Sanvi", "Jain"] else rule_name.upper()
+            pattern_str = rule.get("pattern", "")
+            if pattern_str:
+                try:
+                    pat = re.compile(pattern_str, re.IGNORECASE)
+                    for match in pat.finditer(text_content):
+                        entities.append({
+                            "start": match.start(),
+                            "end": match.end(),
+                            "entity_type": etype,
+                            "value": match.group()
+                        })
+                except Exception as re_err:
+                    logger.error(f"Failed to compile custom regex rule '{rule_name}': {re_err}")
 
         # 3. Resolve overlaps
         # Sort by start index ascending, and length descending

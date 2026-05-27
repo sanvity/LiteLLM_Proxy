@@ -86,3 +86,17 @@ general_fallbacks:
 # LiteLLM automatically uses the larger context models in the primary-cluster (Groq) or premium backups!
 context_window_fallbacks:
   - primary-cluster: ["backup-cluster"]
+
+# PII Shield Settings (Configurable at scale)
+pii_shield_settings:
+  enabled: true
+  entities:
+    - PERSON
+    - US_SSN
+    - PHONE_NUMBER
+    - EMAIL_ADDRESS
+  custom_regex_rules:
+    - name: "Sanvi"
+      pattern: "\\bSanvi\\b"
+    - name: "Jain"
+      pattern: "\\bJain\\b"

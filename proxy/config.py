@@ -22,6 +22,20 @@ class ModelEndpointConfig(BaseModel):
     max_tokens: Optional[int] = Field(None, description="Max response tokens allowed")
     complexity_tier: Optional[str] = Field(None, description="Complexity tier for this endpoint: low, medium, or high")
 
+class PIIShieldSettings(BaseModel):
+    """
+    Configuration model for dynamic local PII masking and shielding.
+    """
+    enabled: bool = Field(default=True, description="Enable or disable local PII shielding")
+    entities: List[str] = Field(
+        default_factory=lambda: ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"],
+        description="Standard entity types to scan and redact using Presidio NLP"
+    )
+    custom_regex_rules: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="List of custom regex patterns to scan and redact"
+    )
+
 class ProxyConfig:
     """
     Loads, parses, and validates the LiteLLM Proxy configuration from YAML and Environment variables.
@@ -29,6 +43,7 @@ class ProxyConfig:
     def __init__(self, config_path: str = "config.yaml"):
         self.config_path = config_path
         self.endpoints: List[ModelEndpointConfig] = []
+        self.pii_shield_settings: PIIShieldSettings = PIIShieldSettings()
         self.routing_strategy: str = "simple-shuffle"
         self.fallback_policy: str = "retry_next_suitable"
         self.num_retries: int = 3
@@ -57,6 +72,14 @@ class ProxyConfig:
             # Parse fallbacks
             self.context_window_fallbacks = raw_data.get("context_window_fallbacks", [])
             self.general_fallbacks = raw_data.get("general_fallbacks", [])
+
+            # Parse PII Shield settings
+            pii_raw = raw_data.get("pii_shield_settings", {})
+            self.pii_shield_settings = PIIShieldSettings(
+                enabled=pii_raw.get("enabled", True),
+                entities=pii_raw.get("entities", ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"]),
+                custom_regex_rules=pii_raw.get("custom_regex_rules", [])
+            )
 
             # Parse model list
             model_list = raw_data.get("model_list", [])
