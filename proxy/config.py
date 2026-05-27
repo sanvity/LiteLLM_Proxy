@@ -20,6 +20,7 @@ class ModelEndpointConfig(BaseModel):
     tpr: int = Field(default=8192, description="Tokens Per Request (Context Window) limit")
     cost_per_million: float = Field(default=0.1, description="Average cost in USD per million tokens")
     max_tokens: Optional[int] = Field(None, description="Max response tokens allowed")
+    complexity_tier: Optional[str] = Field(None, description="Complexity tier for this endpoint: low, medium, or high")
 
 class ProxyConfig:
     """
@@ -86,6 +87,19 @@ class ProxyConfig:
                     else:
                         api_base = raw_base
 
+                cost = litellm_params.get("cost_per_million", 0.1)
+                tpr = litellm_params.get("tpr", 8192)
+                complexity_tier = litellm_params.get("complexity_tier")
+                
+                # Intelligent tier fallback if not explicitly provided
+                if not complexity_tier:
+                    if cost >= 0.50:
+                        complexity_tier = "high"
+                    elif cost >= 0.04:
+                        complexity_tier = "medium"
+                    else:
+                        complexity_tier = "low"
+
                 endpoint = ModelEndpointConfig(
                     model_name=model_name,
                     model=raw_model,
@@ -93,9 +107,10 @@ class ProxyConfig:
                     api_base=api_base,
                     rpm=litellm_params.get("rpm", 1000),
                     tpm=litellm_params.get("tpm", 100000),
-                    tpr=litellm_params.get("tpr", 8192),
-                    cost_per_million=litellm_params.get("cost_per_million", 0.1),
-                    max_tokens=litellm_params.get("max_tokens")
+                    tpr=tpr,
+                    cost_per_million=cost,
+                    max_tokens=litellm_params.get("max_tokens"),
+                    complexity_tier=complexity_tier
                 )
                 self.endpoints.append(endpoint)
                 
@@ -116,9 +131,7 @@ class ProxyConfig:
             params = {
                 "model": e.model,
                 "rpm": e.rpm,
-                "tpm": e.tpm,
-                "tpr": e.tpr,
-                "cost_per_million": e.cost_per_million
+                "tpm": e.tpm
             }
             if e.api_key:
                 params["api_key"] = e.api_key

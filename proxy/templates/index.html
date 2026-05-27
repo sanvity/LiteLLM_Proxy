@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LiteLLM Proxy Routing Dashboard</title>
+    <title>LiteLLM Proxy Server</title>
     <!-- Outfit & Space Grotesk Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -423,8 +423,7 @@
     <header>
         <div class="nav-container">
             <div class="brand">
-                <h1>LiteLLM Routing Proxy</h1>
-                <span>Enterprise Multi-LLM Load Balancer</span>
+                <h1>LiteLLM Proxy Server</h1>
             </div>
             
             <div class="status">
@@ -512,6 +511,11 @@
                         <div class="stat-title">Throughput</div>
                         <div class="stat-value" id="eval-speed">--</div>
                         <div class="stat-meta">Tokens Per Second</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-title">Prompt Complexity</div>
+                        <div class="stat-value" id="eval-complexity" style="color: var(--glow-amber);">--</div>
+                        <div class="stat-meta">Analyzed Tier</div>
                     </div>
                     <div class="stat-card" style="grid-column: span 2; display: flex; flex-direction: column; gap: 0.5rem; background: rgba(6, 182, 212, 0.02); border-color: rgba(6, 182, 212, 0.12);">
                         <div class="stat-title" style="color: var(--glow-cyan);">Query Response Output</div>
@@ -766,7 +770,7 @@
 
                 // Render parameters
                 document.getElementById('eval-response').innerText = reply;
-                document.getElementById('eval-model').innerText = actualModelName;
+                document.getElementById('eval-model').innerText = `${providerName} → ${actualModelName}`;
                 document.getElementById('eval-provider').innerText = `Provider: ${providerName}`;
                 document.getElementById('eval-latency').innerText = `${latency}s`;
                 
@@ -777,6 +781,19 @@
                 
                 const speed = (totalTokens / parseFloat(latency)).toFixed(1);
                 document.getElementById('eval-speed').innerText = `${speed} Tokens/s`;
+                
+                const complexity = data.prompt_complexity || "LOW";
+                const complexityEl = document.getElementById('eval-complexity');
+                if (complexityEl) {
+                    complexityEl.innerText = complexity.toUpperCase();
+                    if (complexity.toLowerCase() === 'high') {
+                        complexityEl.style.color = 'var(--glow-rose)';
+                    } else if (complexity.toLowerCase() === 'medium') {
+                        complexityEl.style.color = 'var(--glow-amber)';
+                    } else {
+                        complexityEl.style.color = 'var(--glow-green)';
+                    }
+                }
 
                 printLog(`[Success] Routed query to ${actualModelName} in ${latency}s (Total tokens: ${totalTokens}).`, 'success');
                 updateMetrics();

@@ -44,7 +44,6 @@ class TestLiteLLMProxy(unittest.TestCase):
         
         self.assertGreater(len(primary_nodes), 0, "No 'primary-cluster' endpoints found.")
         self.assertGreater(len(backup_nodes), 0, "No 'backup-cluster' endpoints found.")
-        self.assertGreater(len(local_nodes), 0, "No 'local-fallback-cluster' endpoints found.")
         
         logger.info(f"Loaded: {len(primary_nodes)} primary nodes, {len(backup_nodes)} backups, and {len(local_nodes)} local fallbacks.")
 
@@ -240,6 +239,99 @@ give me the corrected version of this python code block structure'''
         )
         
         logger.info("PII Shielding Guardrail successfully validated and confirmed.")
+
+    def test_7_complexity_routing(self):
+        """
+        Tests that prompt complexity is correctly classified and routes requests
+        to the appropriate complexity-tiered models.
+        """
+        logger.info("--- Test 7: Complexity-Aware Routing ---")
+        
+        # Case A: Low Complexity prompt (Simple greeting)
+        # Should match 'low' complexity and route to a low cost node (e.g. cerebras/llama3.1-8b or ollama/llama3.1)
+        messages_low = [{"role": "user", "content": "Hello! How is it going?"}]
+        response_low = self.router.execute_chat_completion(
+            model="primary-cluster",
+            messages=messages_low,
+            max_tokens=100,
+            mock_sandbox=True
+        )
+        model_low = response_low["model"]
+        # With low complexity prompt, the best node under primary-cluster is Cerebras Llama 3.1 8B (tier: low, cost: 0.01)
+        self.assertEqual(model_low, "cerebras/llama3.1-8b")
+        logger.info(f"Low complexity prompt routed correctly to low-cost node: {model_low}")
+        
+        # Case B: High Complexity prompt (Coding / optimization request)
+        # Should match 'high' complexity and route to a high reasoning node (e.g. groq/llama-3.3-70b-versatile)
+        messages_high = [{"role": "user", "content": "Optimize this SQL query and write a python refactoring function to execute it cleanly."}]
+        response_high = self.router.execute_chat_completion(
+            model="primary-cluster",
+            messages=messages_high,
+            max_tokens=150,
+            mock_sandbox=True
+        )
+        model_high = response_high["model"]
+        # With high complexity prompt, the best node under primary-cluster is Groq Llama 3.3 70B (tier: high, cost: 0.70)
+        self.assertEqual(model_high, "groq/llama-3.3-70b-versatile")
+        logger.info(f"High complexity prompt routed correctly to reasoning node: {model_high}")
+        
+        # Case C: Medium Complexity prompt (Summarization task)
+        # Should match 'medium' complexity and route to a medium tier node (e.g. groq/llama-3.1-8b-instant)
+        messages_med = [{"role": "user", "content": "Please write a concise summarization of this company's Q1 financial report."}]
+        response_med = self.router.execute_chat_completion(
+            model="primary-cluster",
+            messages=messages_med,
+            max_tokens=150,
+            mock_sandbox=True
+        )
+        model_med = response_med["model"]
+        # With medium complexity prompt, the best node under primary-cluster is Groq Llama 3.1 8B (tier: medium, cost: 0.05)
+        self.assertEqual(model_med, "groq/llama-3.1-8b-instant")
+        logger.info(f"Medium complexity prompt routed correctly to standard node: {model_med}")
+
+    def test_8_reversible_pii_mapping(self):
+        """Tests that the Reversible PII mapping anonymizes prompts and successfully restores original values in response."""
+        logger.info("--- Test 8: Reversible PII Mapping Guardrail ---")
+        
+        raw_prompt = "My name is Sanvi Jain. My email is sanvi.jain.private@gmail.com. SSN is 456-45-6789. Phone is +1-201-5550143."
+        
+        # 1. Verify prompt sanitization separately to inspect placeholders and map
+        sanitized_prompt, pii_map = self.router.shield_prompt_payload_reversible(raw_prompt)
+        logger.info(f"Sanitized: {sanitized_prompt}")
+        logger.info(f"PII Map: {pii_map}")
+        
+        self.assertNotIn("Sanvi", sanitized_prompt)
+        self.assertNotIn("sanvi.jain.private@gmail.com", sanitized_prompt)
+        self.assertIn("<PERSON_1>", sanitized_prompt)
+        self.assertIn("<EMAIL_ADDRESS_1>", sanitized_prompt)
+        self.assertEqual(pii_map["<PERSON_1>"], "Sanvi Jain")
+        self.assertEqual(pii_map["<EMAIL_ADDRESS_1>"], "sanvi.jain.private@gmail.com")
+        
+        # 2. Execute chat completion with mock_sandbox=True to verify end-to-end de-anonymization restoration
+        messages = [{"role": "user", "content": raw_prompt}]
+        response = self.router.execute_chat_completion(
+            model="primary-cluster",
+            messages=messages,
+            max_tokens=100,
+            mock_sandbox=True
+        )
+        
+        reply_content = response["choices"][0]["message"]["content"]
+        logger.info(f"Restored Assistant Response:\n{reply_content}")
+        
+        # Original values must be fully restored in the final client response
+        self.assertIn("Sanvi Jain", reply_content)
+        self.assertIn("sanvi.jain.private@gmail.com", reply_content)
+        self.assertIn("456-45-6789", reply_content)
+        self.assertIn("+1-201-5550143", reply_content)
+        
+        # Placeholders must not remain in the user-returned response
+        self.assertNotIn("<PERSON_1>", reply_content)
+        self.assertNotIn("<EMAIL_ADDRESS_1>", reply_content)
+        self.assertNotIn("<US_SSN_1>", reply_content)
+        self.assertNotIn("<PHONE_NUMBER_1>", reply_content)
+        
+        logger.info("Reversible PII Mapping successfully validated end-to-end.")
 
 if __name__ == "__main__":
     unittest.main()

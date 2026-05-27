@@ -11,6 +11,7 @@ model_list:
       tpm: 100000
       tpr: 131072
       cost_per_million: 0.05
+      complexity_tier: medium
   
   # 2. Cerebras Llama 3.1 8B (Secondary load-balanced node, ultra-low latency, 8k context)
   - model_name: primary-cluster
@@ -21,8 +22,20 @@ model_list:
       tpm: 200000
       tpr: 8192
       cost_per_million: 0.01
+      complexity_tier: low
 
-  # --- backup-cluster: Served by Together AI ---
+  # 3. Groq Llama 3.3 70B (Primary High Complexity node, 128k context)
+  - model_name: primary-cluster
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+      rpm: 30
+      tpm: 100000
+      tpr: 131072
+      cost_per_million: 0.70
+      complexity_tier: high
+
+  # --- backup-cluster: Served by Together AI and Local Ollama ---
   # 1. Together AI Llama 3.1 8B (Backup cluster, 128k context)
   - model_name: backup-cluster
     litellm_params:
@@ -32,16 +45,29 @@ model_list:
       tpm: 150000
       tpr: 131072
       cost_per_million: 0.20
+      complexity_tier: medium
 
-  # # --- local-fallback-cluster: Local Ollama fallback ---
-  # # 1. Local Ollama Llama 3.1 (Local failover if cloud is down or rate-limited)
-  # - model_name: local-fallback-cluster
-  #   litellm_params:
-  #     model: ollama/llama3.1
-  #     api_base: os.environ/OLLAMA_API_BASE
-  #     rpm: 10000
-  #     tpm: 1000000
-  #     tpr: 131072
+  # 2. Together AI Llama 3.3 70B (Backup High Complexity node, 128k context)
+  - model_name: backup-cluster
+    litellm_params:
+      model: together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo
+      api_key: os.environ/TOGETHERAI_API_KEY
+      rpm: 50
+      tpm: 150000
+      tpr: 131072
+      cost_per_million: 0.90
+      complexity_tier: high
+
+  # 3. Local Ollama Llama 3.1 (Local backup failover - zero cost)
+  - model_name: backup-cluster
+    litellm_params:
+      model: ollama/llama3.1
+      api_base: os.environ/OLLAMA_API_BASE
+      rpm: 10000
+      tpm: 1000000
+      tpr: 131072
+      cost_per_million: 0.00
+      complexity_tier: low
 
 # General Router Settings
 router_settings:
@@ -52,11 +78,11 @@ router_settings:
   timeout: 10
 
 # Dynamic Fallback chains
-# If primary-cluster fails, route to backup-cluster, then to local-fallback-cluster
+# If primary-cluster fails, route to backup-cluster
 general_fallbacks:
-  - primary-cluster: ["backup-cluster", "local-fallback-cluster"]
+  - primary-cluster: ["backup-cluster"]
 
 # If the request exceeds Cerebras Llama 3.1 8B context window (TPR 8192), 
 # LiteLLM automatically uses the larger context models in the primary-cluster (Groq) or premium backups!
 context_window_fallbacks:
-  - primary-cluster: ["backup-cluster", "local-fallback-cluster"]
+  - primary-cluster: ["backup-cluster"]

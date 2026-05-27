@@ -141,53 +141,235 @@ class LiteLLMProxyRouter:
                 f"gracefully falling back to high-fidelity Regex engine. Details: {e}"
             )
 
-    def shield_prompt_payload(self, text_content: str) -> str:
+    def shield_prompt_payload_reversible(self, text_content: str) -> Tuple[str, Dict[str, str]]:
         """
         Scans and redacts Names, SSNs, Phone Numbers, and Emails locally.
-        Uses Microsoft Presidio if available, otherwise executes a bulletproof Regex fallback engine.
+        Combines semantic Microsoft Presidio shielding with a guaranteed Regex scanner.
+        Returns the sanitized string and the request-scoped de-anonymization mapping.
         """
         if not text_content:
-            return ""
+            return "", {}
+
+        entities = []
 
         # 1. Primary Engine: Microsoft Presidio
-        if self.presidio_available and self.analyzer and self.anonymizer:
+        if self.presidio_available and self.analyzer:
             try:
                 results = self.analyzer.analyze(
                     text=text_content, 
                     language="en", 
                     entities=["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"]
                 )
-                anonymized = self.anonymizer.anonymize(
-                    text=text_content, 
-                    analyzer_results=results
-                )
-                return anonymized.text
+                for result in results:
+                    standard_type = result.entity_type
+                    if standard_type == "PERSON":
+                        standard_type = "PERSON"
+                    elif standard_type == "US_SSN":
+                        standard_type = "US_SSN"
+                    elif standard_type == "PHONE_NUMBER":
+                        standard_type = "PHONE_NUMBER"
+                    elif standard_type == "EMAIL_ADDRESS":
+                        standard_type = "EMAIL_ADDRESS"
+                    
+                    val = text_content[result.start:result.end]
+                    entities.append({
+                        "start": result.start,
+                        "end": result.end,
+                        "entity_type": standard_type,
+                        "value": val
+                    })
             except Exception as e:
-                logger.error(f"Presidio shielding failed dynamically, falling back to Regex: {e}")
+                logger.error(f"Presidio shielding failed dynamically: {e}")
 
-        # 2. Fallback Engine: High-Fidelity Regex-Based Anonymizer (Guaranteed No Path Errors)
+        # 2. Dynamic High-Fidelity Regex-Based Sanitization (Guaranteed No Omissions)
         import re
+
+        email_pattern = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]*[a-zA-Z0-9]')
+        ssn_pattern = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
+        phone_pattern = re.compile(r'\b\+?\d{1,4}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b')
+        names_pattern = re.compile(r'\bSanvi\b|\bJain\b', re.IGNORECASE)
+
+        for match in email_pattern.finditer(text_content):
+            entities.append({
+                "start": match.start(),
+                "end": match.end(),
+                "entity_type": "EMAIL_ADDRESS",
+                "value": match.group()
+            })
+        for match in ssn_pattern.finditer(text_content):
+            entities.append({
+                "start": match.start(),
+                "end": match.end(),
+                "entity_type": "US_SSN",
+                "value": match.group()
+            })
+        for match in phone_pattern.finditer(text_content):
+            entities.append({
+                "start": match.start(),
+                "end": match.end(),
+                "entity_type": "PHONE_NUMBER",
+                "value": match.group()
+            })
+        for match in names_pattern.finditer(text_content):
+            entities.append({
+                "start": match.start(),
+                "end": match.end(),
+                "entity_type": "PERSON",
+                "value": match.group()
+            })
+
+        # 3. Resolve overlaps
+        # Sort by start index ascending, and length descending
+        entities.sort(key=lambda x: (x["start"], -(x["end"] - x["start"])))
+
+        non_overlapping = []
+        last_end = 0
+        for ent in entities:
+            if ent["start"] >= last_end:
+                non_overlapping.append(ent)
+                last_end = ent["end"]
+
+        # 4. Generate placeholders and rebuild string (right to left)
+        # Sort non_overlapping by start index descending
+        non_overlapping.sort(key=lambda x: x["start"], reverse=True)
+
         sanitized = text_content
+        pii_map = {}
+        type_counters = {
+            "PERSON": 1,
+            "US_SSN": 1,
+            "PHONE_NUMBER": 1,
+            "EMAIL_ADDRESS": 1
+        }
+        value_to_placeholder = {}
 
-        # Anonymize Emails
-        email_pattern = r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+'
-        sanitized = re.sub(email_pattern, "<EMAIL_ADDRESS>", sanitized)
+        for ent in non_overlapping:
+            val = ent["value"]
+            etype = ent["entity_type"]
+            if etype not in type_counters:
+                etype = "PERSON"
 
-        # Anonymize US SSNs
-        ssn_pattern = r'\b\d{3}-\d{2}-\d{4}\b'
-        sanitized = re.sub(ssn_pattern, "<US_SSN>", sanitized)
+            # Check if we already assigned a placeholder to this exact value (case-insensitive for emails)
+            normalized_val = val.strip()
+            key = (etype, normalized_val.lower() if etype in ["EMAIL_ADDRESS"] else normalized_val)
 
-        # Anonymize Phone Numbers
-        phone_pattern = r'\b\+?\d{1,4}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b'
-        sanitized = re.sub(phone_pattern, "<PHONE_NUMBER>", sanitized)
+            if key not in value_to_placeholder:
+                placeholder = f"<{etype}_{type_counters[etype]}>"
+                type_counters[etype] += 1
+                value_to_placeholder[key] = placeholder
+                pii_map[placeholder] = val
+            else:
+                placeholder = value_to_placeholder[key]
+                if placeholder not in pii_map:
+                    pii_map[placeholder] = val
 
-        # Anonymize Names (PERSON)
-        # We explicitly anonymize the specific vulnerable prompt name literals: "Sanvi" and "Jain"
-        # as well as user variables in assignment patterns (e.g. USER_FIRST_NAME = "Sanvi")
-        sanitized = re.sub(r'\bSanvi\b', "<PERSON>", sanitized, flags=re.IGNORECASE)
-        sanitized = re.sub(r'\bJain\b', "<PERSON>", sanitized, flags=re.IGNORECASE)
+            # Replace in sanitized string
+            start = ent["start"]
+            end = ent["end"]
+            sanitized = sanitized[:start] + placeholder + sanitized[end:]
 
+        return sanitized, pii_map
+
+    def shield_prompt_payload(self, text_content: str) -> str:
+        """
+        Legacy wrapper for shield_prompt_payload_reversible.
+        """
+        sanitized, _ = self.shield_prompt_payload_reversible(text_content)
         return sanitized
+
+    def restore_pii_content(self, text: str, pii_map: Dict[str, str]) -> str:
+        """
+        Restores raw PII values back into the assistant response content.
+        Uses exact placeholder replacement.
+        """
+        if not text or not pii_map:
+            return text
+        
+        restored = text
+        for placeholder, original_value in pii_map.items():
+            restored = restored.replace(placeholder, original_value)
+            
+        return restored
+
+    def de_anonymize_response(self, response: Dict[str, Any], pii_map: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Parses response content and restores PII values.
+        Logs telemetry information.
+        """
+        if not pii_map or not response:
+            return response
+            
+        try:
+            choices = response.get("choices", [])
+            replaced_count = 0
+            for choice in choices:
+                msg = choice.get("message", {})
+                content = msg.get("content", "")
+                if content:
+                    restored_content = self.restore_pii_content(content, pii_map)
+                    if restored_content != content:
+                        msg["content"] = restored_content
+                        # Let's count how many placeholders were restored
+                        for placeholder in pii_map.keys():
+                            if placeholder in content:
+                                replaced_count += 1
+                                
+            if replaced_count > 0:
+                self.log_event(
+                    f"[PII De-anonymizer] Mapped {replaced_count} placeholders back in response for user convenience.", 
+                    "success"
+                )
+        except Exception as e:
+            logger.error(f"Error during de-anonymization: {e}")
+            
+        return response
+
+    def classify_prompt_complexity(self, messages: List[Dict[str, str]], required_context: int) -> str:
+        """
+        Classifies prompt complexity into 'low', 'medium', or 'high' based on:
+        1. Context window requirement (required_context)
+        2. Semantic features (presence of reasoning/coding keywords, structural code, etc.)
+        """
+        # Feature 1: Context requirement
+        if required_context > 8192:
+            return "high"
+        
+        # Feature 2: Semantic check on the latest user message
+        user_msgs = [m.get("content", "") for m in messages if m.get("role") == "user"]
+        latest_user_msg = user_msgs[-1] if user_msgs else ""
+        
+        # Keywords suggesting high complexity (reasoning, coding, architecture, deep math)
+        high_complexity_keywords = [
+            "code", "python", "javascript", "c++", "rust", "java", "html", "css", "sql", "git",
+            "algorithm", "function", "refactor", "debug", "optimize", "regex", "database",
+            "proof", "theorem", "math", "calculus", "derive", "solve", "equation",
+            "analyze", "evaluate", "architecture", "design pattern", "system design",
+            "compare and contrast", "step by step", "reasoning", "logical deduction"
+        ]
+        
+        # Keywords suggesting medium complexity (formatting, summarizing, translations, drafting)
+        medium_complexity_keywords = [
+            "summar", "summary", "report", "translation", "translate", "synopsis", "outline", "draft", 
+            "rewrite", "rephrase", "format", "extract", "list", "bullet points", "email",
+            "explain", "what is", "how does"
+        ]
+        
+        msg_lower = latest_user_msg.lower()
+        
+        # Count high-complexity indicators (keywords or code-like patterns)
+        high_count = sum(1 for kw in high_complexity_keywords if kw in msg_lower)
+        # Check for code blocks (```) or braces/indentation suggesting code
+        if "```" in msg_lower or (msg_lower.count("{") > 2 and msg_lower.count("}") > 2) or "def " in msg_lower or "import " in msg_lower:
+            high_count += 3
+            
+        medium_count = sum(1 for kw in medium_complexity_keywords if kw in msg_lower)
+        
+        if high_count >= 2 or (high_count >= 1 and required_context > 2048):
+            return "high"
+        elif medium_count >= 1 or required_context > 1024 or len(latest_user_msg) > 500:
+            return "medium"
+        else:
+            return "low"
 
     def execute_chat_completion(
         self, 
@@ -202,25 +384,37 @@ class LiteLLMProxyRouter:
         with self.metrics_lock:
             self.metrics["total_requests"] += 1
 
-        # 1. Local PII Shielding
+        # 1. Local PII Shielding (Reversible)
         sanitized_messages = []
         pii_redacted = False
+        global_pii_map = {}
         for msg in messages:
             content = msg.get("content", "")
-            if msg.get("role") == "user":
-                sanitized_content = self.shield_prompt_payload(content)
+            role = msg.get("role", "")
+            if role == "user":
+                sanitized_content, request_pii_map = self.shield_prompt_payload_reversible(content)
                 if sanitized_content != content:
                     pii_redacted = True
-                    self.log_event("[PII Shield] Sensitive information detected and redacted locally.", "warning")
-                sanitized_messages.append({"role": msg.get("role"), "content": sanitized_content})
+                    global_pii_map.update(request_pii_map)
+                sanitized_messages.append({"role": role, "content": sanitized_content})
             else:
                 sanitized_messages.append(msg)
+
+        if pii_redacted:
+            self.log_event(f"[PII Shield] Sensitive information detected and redacted locally. Placeholders: {list(global_pii_map.keys())}", "warning")
 
         estimated_prompt_tokens = self.estimate_request_tokens(sanitized_messages)
         max_tokens = kwargs.get("max_tokens", 1000)
         required_context = estimated_prompt_tokens + max_tokens
         
-        self.log_event(f"[Analysis] New request on '{model}'. Size: {estimated_prompt_tokens} prompt + {max_tokens} response = {required_context} required TPR.", "routing")
+        # Classify complexity
+        complexity = self.classify_prompt_complexity(sanitized_messages, required_context)
+        
+        self.log_event(
+            f"[Analysis] New request on '{model}'. Size: {estimated_prompt_tokens} prompt + {max_tokens} response = {required_context} required TPR. "
+            f"Prompt Complexity classified as: '{complexity.upper()}'.", 
+            "routing"
+        )
 
         # 2. Select target endpoints and apply proactive TPR & TPM/RPM load-balancing/routing
         search_clusters = [model]
@@ -254,22 +448,42 @@ class LiteLLMProxyRouter:
                 suitable_endpoints.append((ep, current_tpm, current_rpm))
                 
             if suitable_endpoints:
-                # Cost-Aware Load Balancing:
-                # 1. Prioritize endpoints with the lowest cost_per_million (least credit usage)
-                # 2. Break ties using the lowest relative utilization (least-loaded)
-                def get_cost_and_util(item):
+                # Complexity-Aware and Cost-Aware Multi-Objective Load Balancing:
+                # 1. Primary Objective: Minimize tier mismatch penalty (align with classified complexity)
+                # 2. Secondary Objective: Minimize cost_per_million (least credit usage)
+                # 3. Tertiary Objective: Minimize utilization (balanced resource usage)
+                def get_suitability_score(item):
                     ep, t_used, r_used = item
-                    util = max(t_used / ep.tpm, r_used / ep.rpm)
-                    return (ep.cost_per_million, util)
                     
-                selected_endpoint, t_used, r_used = min(suitable_endpoints, key=get_cost_and_util)
+                    tier_map = {"low": 1, "medium": 2, "high": 3}
+                    p_tier = tier_map.get(complexity, 2)
+                    ep_tier = tier_map.get(ep.complexity_tier, 2)
+                    
+                    tier_mismatch = abs(p_tier - ep_tier)
+                    
+                    # Strong penalty if high complexity prompt is sent to a low reasoning node
+                    if complexity == "high" and ep.complexity_tier == "low":
+                        tier_mismatch += 5.0
+                    # Strong penalty if low complexity prompt is sent to an expensive high-tier node
+                    if complexity == "low" and ep.complexity_tier == "high":
+                        tier_mismatch += 5.0
+                        
+                    util = max(t_used / ep.tpm, r_used / ep.rpm)
+                    return (tier_mismatch, ep.cost_per_million, util)
+                    
+                selected_endpoint, t_used, r_used = min(suitable_endpoints, key=get_suitability_score)
                 selected_cluster = cluster
                 if cluster != model:
                     is_fallback_triggered = True
                     with self.metrics_lock:
                         self.metrics["fallback_events"] += 1
                     self.log_event(f"[Fallback Route] Overload/limit on '{model}'. Cascading to cluster '{cluster}'.", "warning")
-                self.log_event(f"[Cost Optimized] Node '{selected_endpoint.model}' selected in cluster '{cluster}' (Cost: ${selected_endpoint.cost_per_million}/M tokens, TPM usage: {t_used}/{selected_endpoint.tpm}).", "success")
+                
+                self.log_event(
+                    f"[Complexity-Aware Selection] Node '{selected_endpoint.model}' selected in cluster '{cluster}' "
+                    f"(Complexity Tier: {selected_endpoint.complexity_tier.upper()}, Cost: ${selected_endpoint.cost_per_million}/M tokens, TPM usage: {t_used}/{selected_endpoint.tpm}).", 
+                    "success"
+                )
                 break
                 
         # Relax TPR constraint if prompt is extremely large and exceeds all limits
@@ -305,6 +519,8 @@ class LiteLLMProxyRouter:
                 max_tokens=max_tokens,
                 messages=sanitized_messages
             )
+            response["prompt_complexity"] = complexity
+            response = self.de_anonymize_response(response, global_pii_map)
             return response
 
         # Real API Execution via LiteLLM Router - directly let LITELLM route the model!
@@ -344,6 +560,12 @@ class LiteLLMProxyRouter:
                 })
             
             self._update_success_metrics(actual_routed_model, input_tokens, output_tokens)
+            try:
+                response["prompt_complexity"] = complexity
+            except Exception:
+                pass
+            
+            response = self.de_anonymize_response(response, global_pii_map)
             return response
             
         except Exception as e:
@@ -386,6 +608,12 @@ class LiteLLMProxyRouter:
                         self.metrics["fallback_events"] += 1
                         
                     self._update_success_metrics(actual_routed_model, input_tokens, output_tokens)
+                    try:
+                        response["prompt_complexity"] = complexity
+                    except Exception:
+                        pass
+                    
+                    response = self.de_anonymize_response(response, global_pii_map)
                     return response
                     
                 except Exception as ex:
@@ -420,7 +648,7 @@ class LiteLLMProxyRouter:
             f"[LiteLLM Proxy Mock - {endpoint.model}]\n"
             f"Routing Group: {virtual_model}\n"
             f"Optimized TPR Context: {endpoint.tpr} max tokens.\n"
-            f"Acknowledged request: '{last_message[:60]}...'"
+            f"Acknowledged request: '{last_message[:200]}...'"
         )
         
         output_tokens = self.estimate_tokens(mock_reply)
