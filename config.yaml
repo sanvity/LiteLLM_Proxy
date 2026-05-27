@@ -1,0 +1,62 @@
+# LiteLLM Routing and Load-Balancing Configuration - PII Shield Edition
+
+model_list:
+  # --- primary-cluster: Served by Groq and Cerebras ---
+  # 1. Groq Llama 3.1 8B (Primary load-balanced node, 128k context)
+  - model_name: primary-cluster
+    litellm_params:
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+      rpm: 30
+      tpm: 100000
+      tpr: 131072
+      cost_per_million: 0.05
+  
+  # 2. Cerebras Llama 3.1 8B (Secondary load-balanced node, ultra-low latency, 8k context)
+  - model_name: primary-cluster
+    litellm_params:
+      model: cerebras/llama3.1-8b
+      api_key: os.environ/CEREBRAS_API_KEY
+      rpm: 30
+      tpm: 200000
+      tpr: 8192
+      cost_per_million: 0.01
+
+  # --- backup-cluster: Served by Together AI ---
+  # 1. Together AI Llama 3.1 8B (Backup cluster, 128k context)
+  - model_name: backup-cluster
+    litellm_params:
+      model: together_ai/meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo
+      api_key: os.environ/TOGETHERAI_API_KEY
+      rpm: 50
+      tpm: 150000
+      tpr: 131072
+      cost_per_million: 0.20
+
+  # # --- local-fallback-cluster: Local Ollama fallback ---
+  # # 1. Local Ollama Llama 3.1 (Local failover if cloud is down or rate-limited)
+  # - model_name: local-fallback-cluster
+  #   litellm_params:
+  #     model: ollama/llama3.1
+  #     api_base: os.environ/OLLAMA_API_BASE
+  #     rpm: 10000
+  #     tpm: 1000000
+  #     tpr: 131072
+
+# General Router Settings
+router_settings:
+  routing_strategy: usage-based-routing # Balanced dynamically based on current TPM/RPM usage
+  allowed_fails: 1
+  cooldown_time: 60
+  num_retries: 3
+  timeout: 10
+
+# Dynamic Fallback chains
+# If primary-cluster fails, route to backup-cluster, then to local-fallback-cluster
+general_fallbacks:
+  - primary-cluster: ["backup-cluster", "local-fallback-cluster"]
+
+# If the request exceeds Cerebras Llama 3.1 8B context window (TPR 8192), 
+# LiteLLM automatically uses the larger context models in the primary-cluster (Groq) or premium backups!
+context_window_fallbacks:
+  - primary-cluster: ["backup-cluster", "local-fallback-cluster"]
