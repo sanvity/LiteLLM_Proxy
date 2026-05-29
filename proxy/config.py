@@ -28,12 +28,24 @@ class PIIShieldSettings(BaseModel):
     """
     enabled: bool = Field(default=True, description="Enable or disable local PII shielding")
     entities: List[str] = Field(
-        default_factory=lambda: ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"],
+        default_factory=list,
         description="Standard entity types to scan and redact using Presidio NLP"
     )
     custom_regex_rules: List[Dict[str, str]] = Field(
         default_factory=list,
         description="List of custom regex patterns to scan and redact"
+    )
+    sensitivity: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Sensitivity sliders for security evaluators"
+    )
+    evaluators: Dict[str, bool] = Field(
+        default_factory=dict,
+        description="Toggles for active security evaluators"
+    )
+    remediation_actions: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Remediation actions (BLOCK, MASK, REWRITE)"
     )
 
 class ProxyConfig:
@@ -50,6 +62,7 @@ class ProxyConfig:
         self.timeout: int = 10
         self.context_window_fallbacks: List[Dict[str, List[str]]] = []
         self.general_fallbacks: List[Dict[str, List[str]]] = []
+        self.guardrails: List[Dict[str, Any]] = []
         
         self.load_config()
 
@@ -77,9 +90,15 @@ class ProxyConfig:
             pii_raw = raw_data.get("pii_shield_settings", {})
             self.pii_shield_settings = PIIShieldSettings(
                 enabled=pii_raw.get("enabled", True),
-                entities=pii_raw.get("entities", ["PERSON", "US_SSN", "PHONE_NUMBER", "EMAIL_ADDRESS"]),
-                custom_regex_rules=pii_raw.get("custom_regex_rules", [])
+                entities=pii_raw.get("entities", []),
+                custom_regex_rules=pii_raw.get("custom_regex_rules", []),
+                sensitivity=pii_raw.get("sensitivity", {}),
+                evaluators=pii_raw.get("evaluators", {}),
+                remediation_actions=pii_raw.get("remediation_actions", {})
             )
+
+            # Parse Guardrails
+            self.guardrails = raw_data.get("guardrails", [])
 
             # Parse model list
             model_list = raw_data.get("model_list", [])

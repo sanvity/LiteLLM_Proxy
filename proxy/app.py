@@ -21,6 +21,15 @@ class ChatCompletionRequest(BaseModel):
     stream: Optional[bool] = Field(default=False, description="If true, stream tokens (Note: non-streaming fully optimized in this proxy version)")
     mock_sandbox: Optional[bool] = Field(default=False, description="Force request to run in mock sandbox mode for test verification")
 
+class TeamGuardrailRegisterRequest(BaseModel):
+    guardrail_name: str = Field(..., description="Unique name for the guardrail")
+    litellm_params: Dict[str, Any] = Field(..., description="YAML parameters matching Generic Guardrail API")
+    guardrail_info: Optional[Dict[str, Any]] = Field(None, description="Optional metadata description")
+
+class GuardrailTestRequest(BaseModel):
+    text: str = Field(..., description="The prompt or text to test against selected guardrails")
+    guardrails: Optional[List[str]] = Field(None, description="List of guardrail names to compare. Runs all if not specified.")
+
 class LiteLLMProxyApp:
     """
     Class-based FastAPI Application container for the LiteLLM Proxy microservice.
@@ -161,7 +170,7 @@ class LiteLLMProxyApp:
 
             try:
                 # Execute complete load-balanced query
-                response = self.router.execute_chat_completion(
+                response = await self.router.execute_chat_completion(
                     model=request.model,
                     messages=messages_dict,
                     temperature=request.temperature,
@@ -176,6 +185,231 @@ class LiteLLMProxyApp:
             except Exception as e:
                 # Global failure (e.g. rate limit, backend down, misconfiguration)
                 raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/preference-config")
+        async def get_preference_config():
+            """Returns current user priority preferences, credit limits, and accumulated spending."""
+            return {
+                "preference_enabled": self.router.preference_enabled,
+                "preference_list": self.router.preference_list,
+                "credit_limits": self.router.credit_limits,
+                "accumulated_spend": self.router.accumulated_spend,
+                "available_physical_models": list(set(e.model for e in self.config.endpoints))
+            }
+
+        @self.app.post("/preference-config")
+        async def update_preference_config(config: dict = Body(...)):
+            """Updates the priority preference list, credit limits, and enablement flag."""
+            self.router.preference_enabled = config.get("preference_enabled", self.router.preference_enabled)
+            self.router.preference_list = config.get("preference_list", self.router.preference_list)
+            
+            limits = config.get("credit_limits", {})
+            for m, limit in limits.items():
+                self.router.credit_limits[m] = float(limit)
+                
+            return {"status": "success", "message": "Preference routing configuration synchronized in memory."}
+
+        @self.app.post("/preference-config/reset")
+        async def reset_preference_spend():
+            """Resets all accumulated spend counters to $0.00."""
+            for m in list(self.router.accumulated_spend.keys()):
+                self.router.accumulated_spend[m] = 0.0
+            return {"status": "success", "message": "All accumulated model credit spending counters reset to zero."}
+
+
+        @self.app.post("/guardrails/register")
+        async def register_guardrail(request: TeamGuardrailRegisterRequest):
+            """
+            Developer dynamic team-scoped guardrail registration.
+            """
+            params = request.litellm_params
+            provider = params.get("guardrail")
+            if not provider or provider not in ["aporia", "litellm_content_filter"]:
+                raise HTTPException(status_code=400, detail="Registration requires 'aporia' or 'litellm_content_filter' provider.")
+            
+            # Simple metadata validations
+            if provider == "aporia":
+                if not params.get("api_base") or not params.get("api_key"):
+                    raise HTTPException(status_code=400, detail="Missing required 'api_base' or 'api_key' parameter for Aporia.")
+                
+            import uuid
+            guardrail_id = str(uuid.uuid4())
+            
+            # Store in router team-based registry
+            self.router.team_guardrails[guardrail_id] = {
+                "guardrail_id": guardrail_id,
+                "guardrail_name": request.guardrail_name,
+                "litellm_params": params,
+                "guardrail_info": request.guardrail_info or {},
+                "status": "pending_review",
+                "submitted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            }
+            
+            return {
+                "guardrail_id": guardrail_id,
+                "guardrail_name": request.guardrail_name,
+                "status": "pending_review",
+                "submitted_at": self.router.team_guardrails[guardrail_id]["submitted_at"]
+            }
+
+        @self.app.get("/guardrails/submissions")
+        async def get_submissions(status: Optional[str] = None):
+            """
+            Lists all team-submitted guardrails for comparison and auditing.
+            """
+            submissions = list(self.router.team_guardrails.values())
+            if status:
+                submissions = [s for s in submissions if s.get("status") == status]
+            return {"submissions": submissions}
+
+        @self.app.get("/aporia/control-plane")
+        async def get_aporia_control_plane():
+            from .router import AporiaControlPlaneState
+            state = AporiaControlPlaneState()
+            return {
+                "master_switch": state.master_switch,
+                "evaluators": state.evaluators,
+                "sensitivity": state.sensitivity,
+                "remediation_actions": state.remediation_actions,
+                "custom_shadow_keywords": state.custom_shadow_keywords,
+                "session_logs": state.session_logs[-100:]
+            }
+
+        @self.app.post("/aporia/control-plane")
+        async def update_aporia_control_plane(config: dict):
+            from .router import AporiaControlPlaneState
+            state = AporiaControlPlaneState()
+            state.master_switch = config.get("master_switch", state.master_switch)
+            state.evaluators = config.get("evaluators", state.evaluators)
+            state.sensitivity = config.get("sensitivity", state.sensitivity)
+            state.remediation_actions = config.get("remediation_actions", state.remediation_actions)
+            state.custom_shadow_keywords = config.get("custom_shadow_keywords", state.custom_shadow_keywords)
+            return {"status": "success", "message": "Aporia control plane configuration updated successfully."}
+
+        @self.app.post("/guardrails/submissions/{guardrail_id}/approve")
+        async def approve_submission(guardrail_id: str):
+            """
+            Admin-scoped endpoint to approve and dynamically activate a team guardrail.
+            """
+            if guardrail_id not in self.router.team_guardrails:
+                raise HTTPException(status_code=404, detail="Guardrail submission not found.")
+                
+            submission = self.router.team_guardrails[guardrail_id]
+            submission["status"] = "active"
+            
+            # Dynamically compile and mount in memory
+            name = submission.get("guardrail_name")
+            params = submission.get("litellm_params", {})
+            provider = params.get("guardrail")
+            
+            from .router import LiteLLMContentFilter, GenericGuardrailSimulator
+            if provider == "litellm_content_filter":
+                inst = LiteLLMContentFilter(router=self.router, config_dict=submission)
+            else:
+                inst = GenericGuardrailSimulator(router=self.router, config_dict=submission)
+                
+            if name not in self.router.guardrail_instances:
+                self.router.guardrail_instances[name] = []
+            self.router.guardrail_instances[name].append(inst)
+            
+            self.router.log_event(f"[Admin] Approved and dynamically activated team guardrail '{name}'.", "success")
+            return {"message": "Guardrail successfully approved and activated in memory.", "status": "active"}
+
+        @self.app.post("/guardrails/submissions/{guardrail_id}/reject")
+        async def reject_submission(guardrail_id: str):
+            """
+            Decline a team guardrail submission.
+            """
+            if guardrail_id not in self.router.team_guardrails:
+                raise HTTPException(status_code=404, detail="Guardrail submission not found.")
+                
+            submission = self.router.team_guardrails[guardrail_id]
+            submission["status"] = "rejected"
+            self.router.log_event(f"[Admin] Rejected team guardrail submission '{submission.get('guardrail_name')}'", "error")
+            return {"message": "Guardrail submission rejected.", "status": "rejected"}
+
+        @self.app.post("/guardrails/test")
+        async def test_guardrails(request: GuardrailTestRequest):
+            """
+            Interactive testing playground to compare and evaluate multiple guardrails on a sample input.
+            """
+            text = request.text
+            guardrail_names = request.guardrails
+            
+            from .router import LocalPresidioPIIMasking, LiteLLMContentFilter, GenericGuardrailSimulator
+            if not guardrail_names:
+                guardrail_names = list(self.router.guardrail_instances.keys())
+                
+            results = []
+            
+            for name in guardrail_names:
+                # Guardrail Load Balancing: Retrieve a load-balanced instance of the guardrail by name
+                inst = self.router.get_guardrail_instance(name)
+                if not inst:
+                    # Check if there is an active team guardrail with this name
+                    matching_team = next((g for g in self.router.team_guardrails.values() if g.get("guardrail_name") == name and g.get("status") == "active"), None)
+                    if matching_team:
+                        inst = GenericGuardrailSimulator(router=self.router, config_dict=matching_team)
+                        
+                if not inst:
+                    results.append({
+                        "guardrail_name": name,
+                        "status": "not_found",
+                        "passed": True,
+                        "action": "ALLOW",
+                        "output": text,
+                        "reason": f"Guardrail '{name}' not found or inactive."
+                    })
+                    continue
+                    
+                # Run the selected guardrail instance
+                try:
+                    if isinstance(inst, LocalPresidioPIIMasking):
+                        sandbox_data = {"metadata": {}}
+                        output_text = inst.shield_text(text, sandbox_data)
+                        pii_tokens = sandbox_data["metadata"].get("pii_tokens", {})
+                        passed = (output_text == text)
+                        results.append({
+                            "guardrail_name": name,
+                            "status": "success",
+                            "passed": passed,
+                            "action": "MASK" if not passed else "ALLOW",
+                            "output": output_text,
+                            "reason": f"Detected PII tokens: {list(pii_tokens.values())}" if pii_tokens else "No PII detected."
+                        })
+                    elif isinstance(inst, LiteLLMContentFilter):
+                        is_blocked, action, reason = await inst.check_text(text)
+                        output_text = inst.mask_text(text) if action == "MASK" else text
+                        results.append({
+                            "guardrail_name": name,
+                            "status": "success",
+                            "passed": not is_blocked,
+                            "action": action if is_blocked else "ALLOW",
+                            "output": output_text if action == "MASK" else text,
+                            "reason": reason if is_blocked else "Passes content filter checks."
+                        })
+                    elif isinstance(inst, GenericGuardrailSimulator):
+                        is_blocked, action, reason = await inst.check_text(text)
+                        output_text = inst.mask_text(text) if action == "MASK" else text
+                        results.append({
+                            "guardrail_name": name,
+                            "status": "success",
+                            "passed": not is_blocked,
+                            "action": action if is_blocked else "ALLOW",
+                            "output": output_text,
+                            "reason": reason if is_blocked else "Passes security API checks."
+                        })
+                except Exception as e:
+                    results.append({
+                        "guardrail_name": name,
+                        "status": "error",
+                        "passed": True,
+                        "action": "ALLOW",
+                        "output": text,
+                        "reason": f"Error running guardrail: {e}"
+                    })
+                    
+            return {"results": results}
                 
     def get_app(self) -> FastAPI:
         """Returns the FastAPI instance (useful for running with ASGI servers)."""
