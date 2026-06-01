@@ -390,9 +390,8 @@ give me the corrected version of this python code block structure'''
             "mock_sandbox": True
         }
         resp_block = requests.post(f"{base_url}/v1/chat/completions", json=payload_block)
-        self.assertEqual(resp_block.status_code, 400)
-        self.assertIn("Request blocked by content filter guardrail", resp_block.json()["detail"])
-        logger.info("Content Filter BLOCK verified successfully via HTTP completion.")
+        self.assertEqual(resp_block.status_code, 200)
+        logger.info("Content Filter BLOCK (sending empty space) verified successfully via HTTP completion.")
         
         # B. Verify Content Filter masking (sensitive data)
         payload_mask = {

@@ -64,21 +64,6 @@ class LocalPresidioPIIMasking(_OPTIONAL_PresidioPIIMasking):
         from presidio_anonymizer import AnonymizerEngine
         self.analyzer = AnalyzerEngine()
         self.anonymizer = AnonymizerEngine()
-        
-        # Dynamically register the general numeric ID recognizer natively
-        # utilizing standard pattern recognizers fed into the AnalyzerEngine pipeline natively.
-        # Zero manual pointer loops or code forks!
-        from presidio_analyzer import PatternRecognizer, Pattern
-        general_pattern = Pattern(
-            name="general_numeric_id",
-            regex=r"\b\d{3,6}[ -]?\d{2,6}[ -]?\d{3,6}(?:[ -]?\d{3,6})?\b",
-            score=0.95
-        )
-        general_recognizer = PatternRecognizer(
-            supported_entity="IDENTIFIER",
-            patterns=[general_pattern]
-        )
-        self.analyzer.registry.add_recognizer(general_recognizer)
 
     def validate_environment(self, **kwargs):
         # Overridden to prevent requiring external base URLs in environment
@@ -120,6 +105,49 @@ class LocalPresidioPIIMasking(_OPTIONAL_PresidioPIIMasking):
             language=self.presidio_language,
             entities=active_entities
         )
+        
+        # Manual zero-regex Aadhaar card scan (4 digits + space + 4 digits + space + 4 digits) -> IDENTIFIER
+        from presidio_analyzer import RecognizerResult
+        i = 0
+        while i < len(text) - 13:
+            part1 = text[i:i+4]
+            space1 = text[i+4]
+            part2 = text[i+5:i+9]
+            space2 = text[i+9]
+            part3 = text[i+10:i+14]
+            if (part1.isdigit() and space1 == " " and 
+                part2.isdigit() and space2 == " " and 
+                part3.isdigit()):
+                results.append(RecognizerResult(
+                    entity_type="IDENTIFIER",
+                    start=i,
+                    end=i+14,
+                    score=0.95
+                ))
+                i += 14
+            else:
+                i += 1
+
+        # Manual zero-regex SSN scan (3 digits + hyphen + 2 digits + hyphen + 4 digits) -> US_SSN
+        i = 0
+        while i < len(text) - 10:
+            part1 = text[i:i+3]
+            hyphen1 = text[i+3]
+            part2 = text[i+4:i+6]
+            hyphen2 = text[i+6]
+            part3 = text[i+7:i+11]
+            if (part1.isdigit() and hyphen1 == "-" and 
+                part2.isdigit() and hyphen2 == "-" and 
+                part3.isdigit()):
+                results.append(RecognizerResult(
+                    entity_type="US_SSN",
+                    start=i,
+                    end=i+11,
+                    score=0.95
+                ))
+                i += 11
+            else:
+                i += 1
         
         # Filter results by dynamic confidence thresholds
         filtered_results = []
@@ -215,6 +243,49 @@ class LocalPresidioPIIMasking(_OPTIONAL_PresidioPIIMasking):
             language=self.presidio_language,
             entities=active_entities
         )
+        
+        # Manual zero-regex Aadhaar card scan (4 digits + space + 4 digits + space + 4 digits) -> IDENTIFIER
+        from presidio_analyzer import RecognizerResult
+        i = 0
+        while i < len(text) - 13:
+            part1 = text[i:i+4]
+            space1 = text[i+4]
+            part2 = text[i+5:i+9]
+            space2 = text[i+9]
+            part3 = text[i+10:i+14]
+            if (part1.isdigit() and space1 == " " and 
+                part2.isdigit() and space2 == " " and 
+                part3.isdigit()):
+                results.append(RecognizerResult(
+                    entity_type="IDENTIFIER",
+                    start=i,
+                    end=i+14,
+                    score=0.95
+                ))
+                i += 14
+            else:
+                i += 1
+
+        # Manual zero-regex SSN scan (3 digits + hyphen + 2 digits + hyphen + 4 digits) -> US_SSN
+        i = 0
+        while i < len(text) - 10:
+            part1 = text[i:i+3]
+            hyphen1 = text[i+3]
+            part2 = text[i+4:i+6]
+            hyphen2 = text[i+6]
+            part3 = text[i+7:i+11]
+            if (part1.isdigit() and hyphen1 == "-" and 
+                part2.isdigit() and hyphen2 == "-" and 
+                part3.isdigit()):
+                results.append(RecognizerResult(
+                    entity_type="US_SSN",
+                    start=i,
+                    end=i+11,
+                    score=0.95
+                ))
+                i += 11
+            else:
+                i += 1
         
         # Filter results by dynamic confidence thresholds
         filtered_results = []
@@ -416,15 +487,83 @@ class LiteLLMContentFilter:
         return False, None, None
 
     def mask_text(self, text: str) -> str:
-        """Masks detected blocked words with custom placeholders."""
+        """Masks detected blocked words with custom placeholders without using regex."""
         masked_text = text
         for item in self.blocked_words:
             kw = item.get("keyword", "")
-            if kw and kw.lower() in masked_text.lower():
-                import re
-                masked_text = re.sub(re.escape(kw), f"<{self.guardrail_name.upper()}>", masked_text, flags=re.IGNORECASE)
+            if kw:
+                kw_lower = kw.lower()
+                placeholder = f"<{self.guardrail_name.upper()}>"
+                idx = masked_text.lower().find(kw_lower)
+                while idx != -1:
+                    masked_text = masked_text[:idx] + placeholder + masked_text[idx + len(kw):]
+                    idx = masked_text.lower().find(kw_lower)
                 
         return masked_text
+
+def mask_pii_no_regex(text: str) -> str:
+    """
+    Masks typical PII items (like email addresses, IP addresses, numeric IDs, phone numbers,
+    Aadhaar cards, or SSNs) by revealing only the first 2 and last 2 characters,
+    with the rest replaced with asterisks '*'.
+    No regular expressions are used.
+    """
+    if not text:
+        return ""
+    words = text.split()
+    masked_words = []
+    for word in words:
+        # Strip trailing and leading punctuations for analysis, but maintain them in output
+        clean_word = word.strip(".,;:?!()\"'")
+        punctuation_end = word[len(clean_word):] if clean_word else ""
+        punctuation_start = word[:len(word) - len(clean_word) - len(punctuation_end)] if clean_word else ""
+        
+        # 1. Email check
+        if "@" in clean_word and "." in clean_word:
+            parts = clean_word.split("@", 1)
+            local = parts[0]
+            domain = parts[1]
+            if len(local) > 2:
+                local_masked = local[:2] + "*" * (len(local) - 2)
+            else:
+                local_masked = local[0] + "*" if local else "*"
+            
+            # Domain mask (e.g. gmail.com -> gm***.com)
+            if "." in domain:
+                d_parts = domain.rsplit(".", 1)
+                d_name = d_parts[0]
+                d_ext = d_parts[1]
+                if len(d_name) > 2:
+                    d_masked = d_name[:2] + "*" * (len(d_name) - 2)
+                else:
+                    d_masked = d_name[0] + "*" if d_name else "*"
+                domain = d_masked + "." + d_ext
+                
+            masked_words.append(punctuation_start + local_masked + "@" + domain + punctuation_end)
+            
+        # 2. IP check
+        elif clean_word.count(".") == 3 and all(c.isdigit() or c == "." for c in clean_word):
+            # Mask middle octets
+            octets = clean_word.split(".")
+            masked_octets = [octets[0], "***", "***", octets[3]]
+            masked_words.append(punctuation_start + ".".join(masked_octets) + punctuation_end)
+            
+        # 3. Numeric ID, Phone, Aadhaar, or SSN check (any block of numbers/digits/hyphens)
+        elif any(c.isdigit() for c in clean_word):
+            digits_count = sum(c.isdigit() for c in clean_word)
+            if digits_count >= 5:
+                # Mask middle parts of the ID/number
+                if len(clean_word) > 4:
+                    masked_word = clean_word[:2] + "*" * (len(clean_word) - 4) + clean_word[-2:]
+                else:
+                    masked_word = "*" * len(clean_word)
+                masked_words.append(punctuation_start + masked_word + punctuation_end)
+            else:
+                masked_words.append(word)
+        else:
+            masked_words.append(word)
+            
+    return " ".join(masked_words)
 
 class GenericGuardrailSimulator:
     """
@@ -501,15 +640,16 @@ class GenericGuardrailSimulator:
                 })
                 
                 if action == "BLOCK":
+                    self._last_revised_text = " "
                     return True, "BLOCK", explain
                 elif action == "MASK":
-                    output = "[REDACTED INJECTION ATTEMPT]"
+                    output = mask_pii_no_regex(text)
                     self._last_revised_text = output
                     return True, "MASK", f"[Aporia Masked] Revised prompt: {output}"
                 elif action == "REWRITE":
-                    output = "I cannot process requests attempting to override system constraints."
+                    output = "Standard compliance request context rephrased securely by delegated agent."
                     self._last_revised_text = output
-                    return True, "MASK", f"[Aporia Rephrased] {output}"
+                    return True, "REWRITE", f"[Aporia Rephrased] {output}"
         
         # B. Custom Shadow keyword blocklists
         for kw in state.custom_shadow_keywords:
@@ -524,6 +664,7 @@ class GenericGuardrailSimulator:
                     "action": "BLOCK",
                     "reason": explain
                 })
+                self._last_revised_text = " "
                 return True, "BLOCK", explain
 
         # C. Data/PII Leakage Evaluator
@@ -549,16 +690,16 @@ class GenericGuardrailSimulator:
             circuit_open = False
             if not self.aporia_healthy:
                 if now - self.last_failure_time < self.cooldown_window:
-                    circuit_open = True
-                    self.router.log_event(
-                        f"[Aporia Circuit Breaker] Circuit is OPEN (cooldown window active). Fast-failing to Presidio.",
-                        "warning"
-                    )
+                     circuit_open = True
+                     self.router.log_event(
+                         f"[Aporia Circuit Breaker] Circuit is OPEN (cooldown window active). Fast-failing to Presidio.",
+                         "warning"
+                     )
                 else:
-                    self.router.log_event(
-                        f"[Aporia Circuit Breaker] Circuit is HALF-OPEN. Attempting live health check.",
-                        "warning"
-                    )
+                     self.router.log_event(
+                         f"[Aporia Circuit Breaker] Circuit is HALF-OPEN. Attempting live health check.",
+                         "warning"
+                     )
 
             resp_success = False
             api_failed_with_exception = False
@@ -600,9 +741,17 @@ class GenericGuardrailSimulator:
                         "action": "BLOCK",
                         "reason": explain
                     })
+                    self._last_revised_text = " "
                     return True, "BLOCK", explain
-                elif action in ["modify", "rephrase"]:
-                    revised = response_json.get("revised_response", text)
+                elif action in ["modify", "rephrase", "rewrite", "mask"]:
+                    if action in ["rephrase", "rewrite"]:
+                        revised = "Standard compliance request context rephrased securely by delegated agent."
+                        act_type = "REWRITE"
+                    else:
+                        revised = response_json.get("revised_response", text)
+                        revised = mask_pii_no_regex(revised)
+                        act_type = "MASK"
+                    
                     self._last_revised_text = revised
                     
                     state.session_logs.append({
@@ -610,10 +759,10 @@ class GenericGuardrailSimulator:
                         "prompt": text,
                         "status": "VIOLATION",
                         "evaluator": "pii_leakage",
-                        "action": "MASK",
+                        "action": act_type,
                         "reason": f"Aporia revised content: {revised}"
                     })
-                    return True, "MASK", f"Aporia revised content: {revised}"
+                    return True, act_type, f"Aporia revised content: {revised}"
                 
                 # Clean request!
                 state.session_logs.append({
@@ -678,14 +827,16 @@ class GenericGuardrailSimulator:
                         })
                         
                         if action == "BLOCK":
+                            self._last_revised_text = " "
                             return True, "BLOCK", f"[Aporia Circuit Breaker] Circuit is OPEN. Prompt blocked by Presidio fallback." if circuit_open else "[Aporia Policy Violation: PII Leakage] Prompt blocked by Presidio fallback."
                         elif action == "MASK":
-                            self._last_revised_text = output_text
+                            masked_out = mask_pii_no_regex(output_text)
+                            self._last_revised_text = masked_out
                             return True, "MASK", explain
                         elif action == "REWRITE":
-                            output = "[Sensitive PII identifiers sanitized for compliance]"
+                            output = "Standard compliance request context rephrased securely by delegated agent."
                             self._last_revised_text = output
-                            return True, "MASK", f"[Presidio Fallback Rephrased] {output}"
+                            return True, "REWRITE", f"[Presidio Fallback Rephrased] {output}"
                             
                     # Clean request passing Presidio fallback
                     state.session_logs.append({
@@ -1049,16 +1200,20 @@ class LiteLLMProxyRouter:
                             is_blocked, action, reason = await inst.check_text(current_text)
                             if is_blocked:
                                 if action == "BLOCK":
-                                    raise ValueError(f"Request blocked by content filter guardrail '{inst.guardrail_name}': {reason}")
+                                    current_text = " "
                                 elif action == "MASK":
                                     current_text = inst.mask_text(current_text)
+                                elif action == "REWRITE":
+                                    current_text = "Standard compliance request context rephrased securely by delegated agent."
                         elif isinstance(inst, GenericGuardrailSimulator):
                             is_blocked, action, reason = await inst.check_text(current_text)
                             if is_blocked:
                                 if action == "BLOCK":
-                                    raise ValueError(f"Request blocked by guardrail '{inst.guardrail_name}': {reason}")
+                                    current_text = " "
                                 elif action == "MASK":
                                     current_text = inst.mask_text(current_text)
+                                elif action == "REWRITE":
+                                    current_text = "Standard compliance request context rephrased securely by delegated agent."
                                     
                     new_messages.append({"role": role, "content": current_text})
                 else:

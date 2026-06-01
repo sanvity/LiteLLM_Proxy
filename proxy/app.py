@@ -379,18 +379,36 @@ class LiteLLMProxyApp:
                         })
                     elif isinstance(inst, LiteLLMContentFilter):
                         is_blocked, action, reason = await inst.check_text(text)
-                        output_text = inst.mask_text(text) if action == "MASK" else text
+                        if is_blocked:
+                            if action == "BLOCK":
+                                output_text = " "
+                            elif action == "MASK":
+                                output_text = inst.mask_text(text)
+                            elif action == "REWRITE":
+                                output_text = "Standard compliance request context rephrased securely by delegated agent."
+                            else:
+                                output_text = text
+                        else:
+                            output_text = text
                         results.append({
                             "guardrail_name": name,
                             "status": "success",
                             "passed": not is_blocked,
                             "action": action if is_blocked else "ALLOW",
-                            "output": output_text if action == "MASK" else text,
+                            "output": output_text,
                             "reason": reason if is_blocked else "Passes content filter checks."
                         })
                     elif isinstance(inst, GenericGuardrailSimulator):
                         is_blocked, action, reason = await inst.check_text(text)
-                        output_text = inst.mask_text(text) if action == "MASK" else text
+                        if is_blocked:
+                            if action == "BLOCK":
+                                output_text = " "
+                            elif action in ["MASK", "REWRITE"]:
+                                output_text = inst.mask_text(text)
+                            else:
+                                output_text = text
+                        else:
+                            output_text = text
                         results.append({
                             "guardrail_name": name,
                             "status": "success",
