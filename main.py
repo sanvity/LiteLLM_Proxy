@@ -41,21 +41,23 @@ def _wait_for_streamlit(url: str, timeout: int = 30) -> bool:
 
 def _spawn_streamlit(app_path: str, port: int = 8501) -> subprocess.Popen:
     """
-    Spawns the Streamlit frontend as a background process.
-    Passes flags required for operation behind a reverse proxy:
-      --server.enableCORS=false        — CORS handled by FastAPI
-      --server.enableXsrfProtection=false — XSRF not needed behind proxy
-      --server.baseUrlPath=""          — proxy serves from root
+    Spawns the Streamlit frontend as a background process on localhost only.
+    Passes flags required for operation behind a reverse proxy.
+    Streams Streamlit's stdout/stderr to the main process (visible in Railway/cloud logs).
     """
     env = os.environ.copy()
     env["STREAMLIT_SERVER_PORT"] = str(port)
-    # Tell Streamlit where the proxy API lives (Streamlit calls FastAPI)
+    env["STREAMLIT_SERVER_ADDRESS"] = "127.0.0.1"
+    env["STREAMLIT_SERVER_HEADLESS"] = "true"
+    env["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
+    # Streamlit calls FastAPI internally on localhost
     env.setdefault("PROXY_URL", f"http://127.0.0.1:{os.environ.get('PORT', '8000')}")
 
     proc = subprocess.Popen(
         [
             sys.executable, "-m", "streamlit", "run", app_path,
             "--server.port", str(port),
+            "--server.address", "127.0.0.1",
             "--server.headless", "true",
             "--server.enableCORS", "false",
             "--server.enableXsrfProtection", "false",
@@ -63,10 +65,12 @@ def _spawn_streamlit(app_path: str, port: int = 8501) -> subprocess.Popen:
             "--browser.gatherUsageStats", "false",
         ],
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        # Pipe output so errors appear in Railway/cloud platform logs
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
     return proc
+
 
 
 def main():
@@ -92,6 +96,20 @@ def main():
         logger.info(f"Spawning Streamlit UI process on internal port {streamlit_port}...")
         streamlit_proc = _spawn_streamlit(app_path, port=streamlit_port)
 
+        # Stream Streamlit's stdout to our logger (visible in Railway / cloud logs)
+        import threading
+
+        def _log_streamlit_output(proc: subprocess.Popen):
+            streamlit_logger = logging.getLogger("streamlit")
+            for line in iter(proc.stdout.readline, b""):
+                try:
+                    streamlit_logger.info(line.decode("utf-8", errors="replace").rstrip())
+                except Exception:
+                    pass
+
+        log_thread = threading.Thread(target=_log_streamlit_output, args=(streamlit_proc,), daemon=True)
+        log_thread.start()
+
         def _cleanup():
             logger.info("Shutting down Streamlit process...")
             streamlit_proc.terminate()
@@ -104,17 +122,17 @@ def main():
 
         # ------------------------------------------------------------------
         # 2. Wait for Streamlit to be ready before accepting traffic
-        #    (avoids 503 flash on first browser visit)
+        #    Timeout is 60s to accommodate Railway cold starts + DeBERTa load
         # ------------------------------------------------------------------
         streamlit_url = f"http://127.0.0.1:{streamlit_port}"
         logger.info(f"Waiting for Streamlit to be ready at {streamlit_url}...")
-        ready = _wait_for_streamlit(streamlit_url, timeout=40)
+        ready = _wait_for_streamlit(streamlit_url, timeout=60)
         if ready:
             logger.info("✅ Streamlit is ready.")
         else:
             logger.warning(
-                "⚠️  Streamlit did not respond within 40s. "
-                "FastAPI will still start — Streamlit UI will show a loading screen until ready."
+                "⚠️  Streamlit did not respond within 60s. "
+                "FastAPI will still start — Streamlit UI will auto-refresh when ready."
             )
 
         # ------------------------------------------------------------------
@@ -125,6 +143,7 @@ def main():
 
         logger.info(f"🚀 LiteLLM Gateway online → http://{host}:{port}")
         uvicorn.run(app, host=host, port=port, log_level="info")
+
 
     except Exception as e:
         logger.critical(f"Failed to start LiteLLM Routing Proxy: {e}", exc_info=True)
