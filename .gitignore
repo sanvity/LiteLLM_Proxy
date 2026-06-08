@@ -9,3 +9,5 @@ venv/
 .env
 *.log
 .DS_Store
+_temp_backup/
+

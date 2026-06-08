@@ -22,31 +22,7 @@ class ModelEndpointConfig(BaseModel):
     max_tokens: Optional[int] = Field(None, description="Max response tokens allowed")
     complexity_tier: Optional[str] = Field(None, description="Complexity tier for this endpoint: low, medium, or high")
 
-class PIIShieldSettings(BaseModel):
-    """
-    Configuration model for dynamic local PII masking and shielding.
-    """
-    enabled: bool = Field(default=True, description="Enable or disable local PII shielding")
-    entities: List[str] = Field(
-        default_factory=list,
-        description="Standard entity types to scan and redact using Presidio NLP"
-    )
-    custom_regex_rules: List[Dict[str, str]] = Field(
-        default_factory=list,
-        description="List of custom regex patterns to scan and redact"
-    )
-    sensitivity: Dict[str, float] = Field(
-        default_factory=dict,
-        description="Sensitivity sliders for security evaluators"
-    )
-    evaluators: Dict[str, bool] = Field(
-        default_factory=dict,
-        description="Toggles for active security evaluators"
-    )
-    remediation_actions: Dict[str, str] = Field(
-        default_factory=dict,
-        description="Remediation actions (BLOCK, MASK, REWRITE)"
-    )
+
 
 class ProxyConfig:
     """
@@ -55,14 +31,12 @@ class ProxyConfig:
     def __init__(self, config_path: str = "config.yaml"):
         self.config_path = config_path
         self.endpoints: List[ModelEndpointConfig] = []
-        self.pii_shield_settings: PIIShieldSettings = PIIShieldSettings()
         self.routing_strategy: str = "simple-shuffle"
         self.fallback_policy: str = "retry_next_suitable"
         self.num_retries: int = 3
         self.timeout: int = 10
         self.context_window_fallbacks: List[Dict[str, List[str]]] = []
         self.general_fallbacks: List[Dict[str, List[str]]] = []
-        self.guardrails: List[Dict[str, Any]] = []
         
         self.load_config()
 
@@ -86,19 +60,7 @@ class ProxyConfig:
             self.context_window_fallbacks = raw_data.get("context_window_fallbacks", [])
             self.general_fallbacks = raw_data.get("general_fallbacks", [])
 
-            # Parse PII Shield settings
-            pii_raw = raw_data.get("pii_shield_settings", {})
-            self.pii_shield_settings = PIIShieldSettings(
-                enabled=pii_raw.get("enabled", True),
-                entities=pii_raw.get("entities", []),
-                custom_regex_rules=pii_raw.get("custom_regex_rules", []),
-                sensitivity=pii_raw.get("sensitivity", {}),
-                evaluators=pii_raw.get("evaluators", {}),
-                remediation_actions=pii_raw.get("remediation_actions", {})
-            )
 
-            # Parse Guardrails
-            self.guardrails = raw_data.get("guardrails", [])
 
             # Parse model list
             model_list = raw_data.get("model_list", [])

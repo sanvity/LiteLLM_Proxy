@@ -1,0 +1,29 @@
+model_list:
+  - model_name: llama3
+    litellm_params:
+      model: ollama/llama3
+      api_base: http://localhost:11434
+  - model_name: mistral
+    litellm_params:
+      model: ollama/mistral
+      api_base: http://localhost:11434
+  - model_name: gemma2
+    litellm_params:
+      model: ollama/gemma2
+      api_base: http://localhost:11434
+  - model_name: phi3
+    litellm_params:
+      model: ollama/phi3
+      api_base: http://localhost:11434
+
+guardrails:
+  - guardrail_name: "deberta-pii"
+    litellm_params:
+      guardrail: custom
+      custom_guardrail: ./guardrails/deberta_pii_guardrail.py::DeBERTaPIIGuardrail
+      mode: ["pre_call", "post_call"]
+      default_on: false
+
+litellm_settings:
+  callbacks: ["/Users/sanvijain/Downloads/LiteLLM_Proxy_OpensourceG/guardrails/deberta_pii_guardrail.deberta_register_callback"]
+
