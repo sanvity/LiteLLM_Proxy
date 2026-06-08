@@ -10,4 +10,5 @@ venv/
 *.log
 .DS_Store
 _temp_backup/
+model_cache/
 

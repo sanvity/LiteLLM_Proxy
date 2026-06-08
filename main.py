@@ -2,6 +2,12 @@ import os
 import sys
 import logging
 
+# Ensure Hugging Face cache is set to a consistent local directory in the project root
+project_root = os.path.dirname(os.path.abspath(__file__))
+cache_dir = os.path.join(project_root, "model_cache")
+os.environ["HF_HOME"] = cache_dir
+os.environ["TRANSFORMERS_CACHE"] = cache_dir
+
 import uvicorn
 from dotenv import load_dotenv
 

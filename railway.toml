@@ -2,7 +2,8 @@
 # https://docs.railway.app/reference/config-as-code
 
 [build]
-# Uses Dockerfile at the repo root
+builder = "NIXPACKS"
+buildCommand = "python -c \"from transformers import pipeline; pipeline('token-classification', model='Isotonic/deberta-v3-base_finetuned_ai4privacy_v2')\""
 
 [deploy]
 startCommand = "python main.py"

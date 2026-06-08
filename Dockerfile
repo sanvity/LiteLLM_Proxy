@@ -29,6 +29,10 @@ ENV HOST=0.0.0.0
 ENV TRANSFORMERS_CACHE=/app/model_cache
 ENV HF_HOME=/app/model_cache
 
+# Pre-download DeBERTa-v3 PII model weights into image layer
+RUN python -c "from transformers import pipeline; pipeline('token-classification', model='Isotonic/deberta-v3-base_finetuned_ai4privacy_v2')"
+
+
 # Expose port (Railway overrides this with $PORT)
 EXPOSE $PORT
 
