@@ -1,0 +1,14 @@
+# Railway deployment configuration
+# https://docs.railway.app/reference/config-as-code
+
+[build]
+# Use Dockerfile for build (Railway auto-detects it)
+# No build command needed — Dockerfile handles everything
+
+[deploy]
+# Railway sets $PORT automatically
+startCommand = "python main.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
