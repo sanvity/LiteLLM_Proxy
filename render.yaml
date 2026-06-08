@@ -28,4 +28,4 @@ services:
       # - key: TOGETHERAI_API_KEY
       #   sync: false
 
-    autoDeploy: true         # Re-deploy automatically on every GitHub push
+    autoDeploy: false        # Deployments are triggered explicitly via GitHub Actions after tests pass

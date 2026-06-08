@@ -29,3 +29,15 @@ jobs:
     - name: Run Test Suite
       run: |
         python -m unittest test_proxy.py
+
+    - name: Trigger Render Deployment
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      env:
+        deploy_url: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      run: |
+        if [ -z "$deploy_url" ]; then
+          echo "⚠️ WARNING: RENDER_DEPLOY_HOOK_URL secret is not configured in GitHub repository. Skipping deployment."
+        else
+          echo "🚀 Triggering Render deployment..."
+          curl -f -X POST "$deploy_url"
+        fi
