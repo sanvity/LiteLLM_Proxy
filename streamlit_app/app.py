@@ -158,7 +158,7 @@ def get_local_router():
     from proxy.config import ProxyConfig
     from proxy.router import LiteLLMProxyRouter
     
-    config = ProxyConfig.load_from_yaml(CONFIG_FILE)
+    config = ProxyConfig(CONFIG_FILE)
     return LiteLLMProxyRouter(config)
 
 def load_yaml_config():
