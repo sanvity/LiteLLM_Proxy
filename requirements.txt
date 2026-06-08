@@ -1,3 +1,4 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 litellm>=1.35.0
 fastapi>=0.100.0
 uvicorn[standard]>=0.22.0

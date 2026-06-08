@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union, Any, Tuple
 import asyncio
+import torch
 from litellm.integrations.custom_guardrail import CustomGuardrail
 from litellm._logging import verbose_proxy_logger
 
