@@ -3,6 +3,15 @@ import requests
 import os
 import time
 import yaml
+import asyncio
+import sys
+
+# Ensure parent path is in sys.path for standalone imports
+file_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(file_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 
 # Set minimal, professional industry-appropriate page configuration
 st.set_page_config(
@@ -125,6 +134,32 @@ PROXY_URL = PROXY_URL.rstrip("/")
 # Dynamically parse config.yaml models (relative to this file)
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
 
+# Determine if running in standalone (in-process) mode
+STANDALONE_MODE = os.environ.get("STANDALONE", "").lower() in ("true", "1") or os.environ.get("FASTAPI_URL") == "IN_PROCESS"
+
+# Auto-detect standalone fallback if external API is unreachable at startup
+if not STANDALONE_MODE:
+    try:
+        r = requests.get(f"{PROXY_URL}/health", timeout=1.0)
+        if r.status_code != 200:
+            STANDALONE_MODE = True
+    except Exception:
+        STANDALONE_MODE = True
+
+@st.cache_resource
+def get_local_router():
+    # Enforce consistent HF cache directory programmatically
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(file_dir)
+    cache_dir = os.path.join(parent_dir, "model_cache")
+    os.environ["HF_HOME"] = cache_dir
+    os.environ["TRANSFORMERS_CACHE"] = cache_dir
+    
+    from proxy.config import ProxyConfig
+    from proxy.router import LiteLLMProxyRouter
+    
+    config = ProxyConfig.load_from_yaml(CONFIG_FILE)
+    return LiteLLMProxyRouter(config)
 
 def load_yaml_config():
     if os.path.exists(CONFIG_FILE):
@@ -137,6 +172,18 @@ def load_yaml_config():
 
 
 def load_pii_config():
+    if STANDALONE_MODE:
+        try:
+            router = get_local_router()
+            return {
+                "pii_enabled": getattr(router, "pii_enabled", False),
+                "pii_action": getattr(router, "pii_action", "MASK"),
+                "pii_policy": getattr(router, "pii_policy", None)
+            }
+        except Exception as e:
+            st.error(f"Error loading in-process router configuration: {e}")
+            return {"pii_enabled": False, "pii_action": "MASK"}
+
     try:
         r = requests.get(f"{PROXY_URL}/ui/pii-config", timeout=3.0)
         if r.status_code == 200:
@@ -230,16 +277,20 @@ with st.sidebar:
         st.caption("Custom agent rules dynamically configured across the current execution path.")
 
     st.markdown("---")
-    st.markdown("<h4 style='font-weight:500; font-size:0.9rem; color:#4B5563;'>Backend API</h4>", unsafe_allow_html=True)
-    st.code(PROXY_URL, language=None)
-    try:
-        r = requests.get(f"{PROXY_URL}/health", timeout=2.0)
-        if r.status_code == 200:
-            st.success("✅ API Connected")
-        else:
-            st.error(f"❌ API Error {r.status_code}")
-    except Exception:
-        st.warning("⚠️ API Unreachable")
+    st.markdown("<h4 style='font-weight:500; font-size:0.9rem; color:#4B5563;'>Backend Connection</h4>", unsafe_allow_html=True)
+    if STANDALONE_MODE:
+        st.info("🔌 Standalone (In-Process)")
+        st.caption("Running router and PII shield locally inside Streamlit.")
+    else:
+        st.code(PROXY_URL, language=None)
+        try:
+            r = requests.get(f"{PROXY_URL}/health", timeout=2.0)
+            if r.status_code == 200:
+                st.success("✅ API Connected")
+            else:
+                st.error(f"❌ API Error {r.status_code}")
+        except Exception:
+            st.warning("⚠️ API Unreachable")
 
 # ---------------------------------------------------------------------
 # MAIN INTERFACE TABS
@@ -365,21 +416,33 @@ with tab_backend:
 
         st.markdown("<div style='height:15px;'></div>", unsafe_allow_html=True)
         if st.button("Apply PII Policy", type="primary", use_container_width=True):
-            payload = {
-                "pii_enabled": pii_enabled,
-                "pii_action": pii_action,
-                "pii_policy": pii_policy
-            }
-            try:
-                r = requests.post(f"{PROXY_URL}/ui/pii-config", json=payload, timeout=5.0)
-                if r.status_code == 200:
-                    st.success("PII Guardrail configuration updated successfully.")
+            if STANDALONE_MODE:
+                try:
+                    router = get_local_router()
+                    router.pii_enabled = pii_enabled
+                    router.pii_action = pii_action
+                    router.pii_policy = pii_policy
+                    st.success("PII Guardrail configuration updated successfully (In-Process).")
                     time.sleep(0.5)
                     st.rerun()
-                else:
-                    st.error(f"Failed to save configuration: {r.text}")
-            except Exception as e:
-                st.error(f"Could not connect to proxy server: {e}")
+                except Exception as e:
+                    st.error(f"Error updating in-process guardrail: {e}")
+            else:
+                payload = {
+                    "pii_enabled": pii_enabled,
+                    "pii_action": pii_action,
+                    "pii_policy": pii_policy
+                }
+                try:
+                    r = requests.post(f"{PROXY_URL}/ui/pii-config", json=payload, timeout=5.0)
+                    if r.status_code == 200:
+                        st.success("PII Guardrail configuration updated successfully.")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to save configuration: {r.text}")
+                except Exception as e:
+                    st.error(f"Could not connect to proxy server: {e}")
 
 # ---------------------------------------------------------------------
 # PAGE 2: USER TESTING INTERFACE
@@ -409,30 +472,56 @@ with tab_testing:
         latency = 0.0
         guardrailed_query = user_query
 
-        try:
-            r = requests.post(f"{PROXY_URL}/v1/chat/completions", json=payload, timeout=20)
-            latency = time.time() - start_time
-            if r.status_code == 200:
-                data = r.json()
+        if STANDALONE_MODE:
+            try:
+                router = get_local_router()
+                messages_dict = [{"role": "user", "content": user_query}]
+                data = asyncio.run(router.execute_chat_completion(
+                    model=payload["model"],
+                    messages=messages_dict,
+                    temperature=payload["temperature"],
+                    max_tokens=payload["max_tokens"],
+                    mock_sandbox=False
+                ))
+                latency = time.time() - start_time
                 backend_response = data["choices"][0]["message"]["content"]
                 actual_model = data.get("model", payload["model"])
                 guardrailed_query = data.get("guardrailed_query", user_query)
-            elif r.status_code == 400:
-                try:
-                    error_detail = r.json().get("detail", r.text)
-                except Exception:
-                    error_detail = r.text
-                backend_response = f"⚠️ Request Blocked: {error_detail}"
+            except ValueError as ve:
+                latency = time.time() - start_time
+                backend_response = f"⚠️ Request Blocked: {str(ve)}"
                 actual_model = "Blocked (PII Policy)"
                 guardrailed_query = None
-            else:
-                backend_response = f"⚠️ Gateway Error ({r.status_code}): {r.text}"
-                guardrailed_query = None
-        except Exception as e:
-            latency = 0.045
-            backend_response = f"Could not connect to gateway: {e}"
-            actual_model = f"{payload['model']} (Unreachable)"
-            guardrailed_query = user_query
+            except Exception as e:
+                latency = time.time() - start_time
+                backend_response = f"⚠️ In-Process Gateway Error: {str(e)}"
+                actual_model = f"{payload['model']} (In-Process Error)"
+                guardrailed_query = user_query
+        else:
+            try:
+                r = requests.post(f"{PROXY_URL}/v1/chat/completions", json=payload, timeout=20)
+                latency = time.time() - start_time
+                if r.status_code == 200:
+                    data = r.json()
+                    backend_response = data["choices"][0]["message"]["content"]
+                    actual_model = data.get("model", payload["model"])
+                    guardrailed_query = data.get("guardrailed_query", user_query)
+                elif r.status_code == 400:
+                    try:
+                        error_detail = r.json().get("detail", r.text)
+                    except Exception:
+                        error_detail = r.text
+                    backend_response = f"⚠️ Request Blocked: {error_detail}"
+                    actual_model = "Blocked (PII Policy)"
+                    guardrailed_query = None
+                else:
+                    backend_response = f"⚠️ Gateway Error ({r.status_code}): {r.text}"
+                    guardrailed_query = None
+            except Exception as e:
+                latency = 0.045
+                backend_response = f"Could not connect to gateway: {e}"
+                actual_model = f"{payload['model']} (Unreachable)"
+                guardrailed_query = user_query
 
         st.session_state.last_result = {
             "query": user_query,
