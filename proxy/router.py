@@ -84,6 +84,7 @@ class LiteLLMProxyRouter:
         # PII Guardrail state parameters
         self.pii_enabled = False
         self.pii_action = "MASK"
+        self.pii_policy = None
         self.pii_guardrail = None
 
         # Priority Preference Routing State Parameters
@@ -154,7 +155,7 @@ class LiteLLMProxyRouter:
                 
             guardrail = self._get_pii_guardrail()
             from guardrails.deberta_pii_guardrail import _Config, SERVER_DEFAULT_POLICY, SERVER_OLLAMA_MODEL
-            policy = {k: self.pii_action for k in SERVER_DEFAULT_POLICY.keys()}
+            policy = self.pii_policy if self.pii_policy is not None else {k: self.pii_action for k in SERVER_DEFAULT_POLICY.keys()}
             cfg = _Config(
                 policy=policy,
                 default_action=self.pii_action,
@@ -345,7 +346,7 @@ class LiteLLMProxyRouter:
         if self.pii_enabled:
             guardrail = self._get_pii_guardrail()
             from guardrails.deberta_pii_guardrail import _Config, SERVER_DEFAULT_POLICY, SERVER_OLLAMA_MODEL
-            policy = {k: self.pii_action for k in SERVER_DEFAULT_POLICY.keys()}
+            policy = self.pii_policy if self.pii_policy is not None else {k: self.pii_action for k in SERVER_DEFAULT_POLICY.keys()}
             cfg = _Config(
                 policy=policy,
                 default_action=self.pii_action,

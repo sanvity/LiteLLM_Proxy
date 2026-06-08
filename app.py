@@ -300,17 +300,54 @@ with tab_backend:
         
         actions = ["BLOCK", "MASK", "REWRITE"]
         pii_action = st.selectbox(
-            "PII Remediation Action",
+            "Default PII Remediation Action",
             options=actions,
             index=actions.index(pii_action_default) if pii_action_default in actions else 1,
-            help="Choose the remediation strategy. BLOCK rejects requests; MASK replaces with entity tokens; REWRITE uses local Ollama model to rewrite text."
+            help="Choose the default remediation strategy. Individual overrides can be set below."
         )
         
+        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+        st.markdown("<span style='font-size:0.85rem; font-weight:600; color:#374151;'>Entity-Level Remediation Policies</span>", unsafe_allow_html=True)
+        
+        pii_policy_default = pii_cfg.get("pii_policy") or {}
+        if not isinstance(pii_policy_default, dict):
+            pii_policy_default = {}
+            
+        PII_ENTITIES = {
+            "person": "Name",
+            "phone number": "Phone Number",
+            "social security number": "SSN / Aadhaar",
+            "credit card number": "Credit Card",
+            "api key": "API Key",
+            "email address": "Email Address",
+            "address": "Address",
+            "bank account number": "Bank Account Number",
+            "passport number": "Passport Number",
+            "password": "Password"
+        }
+        
+        pii_policy = {}
+        with st.expander("Configure Specific PII Types", expanded=True):
+            col_ent1, col_ent2 = st.columns(2)
+            for idx, (entity_key, entity_label) in enumerate(PII_ENTITIES.items()):
+                col = col_ent1 if idx % 2 == 0 else col_ent2
+                with col:
+                    default_action = pii_policy_default.get(entity_key, pii_action)
+                    options = ["BLOCK", "MASK", "REWRITE", "IGNORE"]
+                    selected_action = st.selectbox(
+                        entity_label,
+                        options=options,
+                        index=options.index(default_action) if default_action in options else options.index(pii_action),
+                        key=f"pii_action_{entity_key}"
+                    )
+                    pii_policy[entity_key] = selected_action
+                    
         st.markdown("<div style='height:15px;'></div>", unsafe_allow_html=True)
         if st.button("Apply PII Policy", type="primary", use_container_width=True):
             payload = {
                 "pii_enabled": pii_enabled,
-                "pii_action": pii_action
+                "pii_action": pii_action,
+                "pii_policy": pii_policy
             }
             try:
                 r = requests.post(f"{PROXY_URL}/ui/pii-config", json=payload, timeout=5.0)

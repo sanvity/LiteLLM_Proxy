@@ -93,8 +93,10 @@ def canonicalize_label(model_label: str) -> str:
         return "bank account number"
     if "ADDRESS" in l or "STREET" in l or "CITY" in l or "ZIP" in l or "LOC" in l:
         return "address"
-    if "PASSWORD" in l or "KEY" in l or "SECRET" in l:
+    if "PASSWORD" in l:
         return "password"
+    if "KEY" in l or "SECRET" in l:
+        return "api key"
     return model_label.lower()
 
 

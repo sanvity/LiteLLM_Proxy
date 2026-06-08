@@ -24,6 +24,7 @@ class ChatCompletionRequest(BaseModel):
 class UIPiiConfig(BaseModel):
     pii_enabled: bool = Field(default=False)
     pii_action: str = Field(default="MASK", description="BLOCK, MASK, or REWRITE")
+    pii_policy: Optional[Dict[str, str]] = Field(default=None)
 
 class LiteLLMProxyApp:
     """
@@ -209,7 +210,8 @@ class LiteLLMProxyApp:
             """Returns the current PII guardrail configuration."""
             return {
                 "pii_enabled": getattr(self.router, "pii_enabled", False),
-                "pii_action": getattr(self.router, "pii_action", "MASK")
+                "pii_action": getattr(self.router, "pii_action", "MASK"),
+                "pii_policy": getattr(self.router, "pii_policy", None)
             }
 
         @self.app.post("/ui/pii-config")
@@ -217,6 +219,7 @@ class LiteLLMProxyApp:
             """Updates the PII guardrail configuration."""
             self.router.pii_enabled = config.pii_enabled
             self.router.pii_action = config.pii_action
+            self.router.pii_policy = config.pii_policy
             return {"status": "success", "message": f"PII Guardrail configuration synchronized in memory: enabled={config.pii_enabled}, action={config.pii_action}."}
 
 
