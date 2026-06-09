@@ -82,7 +82,7 @@ class LiteLLMProxyRouter:
         self.guardrail_instances = {}
 
         # PII Guardrail state parameters
-        self.pii_enabled = False
+        self.pii_enabled = True
         self.pii_action = "MASK"
         self.pii_policy = None
         self.pii_guardrail = None
