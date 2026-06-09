@@ -1,3 +1,4 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
 litellm>=1.35.0
 fastapi>=0.100.0
 uvicorn>=0.22.0
@@ -8,3 +9,5 @@ pyyaml>=6.0
 prometheus-client>=0.17.0
 requests>=2.31.0
 streamlit>=1.38.0
+transformers>=4.40.0
+torch>=2.4.0+cpu
