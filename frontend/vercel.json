@@ -1,0 +1,16 @@
+{
+  "rewrites": [
+    {
+      "source": "/health",
+      "destination": "https://YOUR-BACKEND-ON-RENDER.onrender.com/health"
+    },
+    {
+      "source": "/metrics",
+      "destination": "https://YOUR-BACKEND-ON-RENDER.onrender.com/metrics"
+    },
+    {
+      "source": "/v1/:path*",
+      "destination": "https://YOUR-BACKEND-ON-RENDER.onrender.com/v1/:path*"
+    }
+  ]
+}

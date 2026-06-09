@@ -1,190 +1,144 @@
-# 🛡️ LiteLLM Gateway Console — Production-Ready AI Proxy
+# LiteLLM Load-Balancing & Routing Proxy Server
 
-An enterprise-grade AI gateway with **intelligent LLM routing**, **real-time PII shielding**, and a **built-in Streamlit dashboard** — accessible from a single URL in any browser, no local setup required.
+An enterprise-grade, class-based (OOP) microservice designed for intelligent load balancing, dynamic routing, rate-limit management (TPM/RPM), context-window filtering (TPR), and automatic fallbacks across multiple open-source LLM providers. 
 
-Built with **FastAPI**, **LiteLLM**, **DeBERTa-v3**, and **Streamlit**, deployed as a single Docker container.
+Built using **FastAPI**, **LiteLLM**, and **Pydantic**, this server acts as a unified gateway for open-source AI, abstracting complex backend topologies (Groq, Cerebras, Together AI, Ollama, and Mistral) into a single, high-availability, OpenAI-compatible API.
 
 ---
 
-## ☁️ One-Click Deploy
+## Key Features
 
-Deploy to your preferred cloud platform by clicking a button below. Set your API key secrets in the platform dashboard after deployment.
+1. **Class-Based (OOP) Architecture**: Fully encapsulated microservice components (Config, Router Engine, and FastAPI Controller) designed for clean dependency injection and seamless microservice integration.
+2. **Unified Virtual Models**: Abstracts backend providers under two clean, logical groups:
+   - `oss-chat-fast`: Extremely fast, lightweight open-source models (e.g. Llama 3 8B, Mistral Nemo) served across Cerebras, Groq, Together AI, or local Ollama.
+   - `oss-chat-premium`: Large-context, advanced reasoning models (e.g. Llama 3.1 70B, Mistral Large) served across Groq, Mistral, or Together AI.
+3. **Dynamic Load Balancing**: Uses `latency-based-routing` to automatically monitor provider response times and route requests to the fastest active deployment.
+4. **Token Per Request (TPR) Filtering**: Automatically estimates prompt token length (`tiktoken`) to screen out endpoints that cannot support the request size, gracefully escalating to larger context windows when needed.
+5. **High Availability & Fallbacks**: Implements automatic multi-provider fallback chains. If Groq encounters rate limits (`429`) or Cerebras goes down, the proxy instantly reroutes to Together AI or a local Ollama deployment.
+6. **Built-in Mock Sandbox Mode**: Includes a comprehensive local testing sandbox that simulates realistic responses without calling downstream APIs, ideal for CI/CD and cost-free local verification.
+7. **Kubernetes-Ready**: Includes pre-configured `/health` (liveness/readiness probes) and `/metrics` (for real-time observability).
 
-### Railway (Recommended)
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/new?template=https://github.com/sanvity/LiteLLM_Proxy)
+---
 
-> After deploy: Go to **Variables** → add `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `TOGETHERAI_API_KEY`
+## System Architecture
 
-### Render
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/sanvity/LiteLLM_Proxy)
-
-> After deploy: Go to **Environment** → add your API keys as secret variables
-
-### Fly.io
-```bash
-# Install Fly CLI, then:
-fly launch --no-deploy
-fly secrets set GROQ_API_KEY=gsk_... CEREBRAS_API_KEY=csk_... TOGETHERAI_API_KEY=...
-fly deploy
+```
+                      +-----------------------------+
+                      |       Client Request        |
+                      +--------------+--------------+
+                                     |
+                                     v
+                      +-----------------------------+
+                      |   FastAPI Proxy Controller  |
+                      |        (proxy/app.py)       |
+                      +--------------+--------------+
+                                     |
+                                     v
+                      +-----------------------------+
+                      |   Routing & Token Manager   |
+                      |       (proxy/router.py)     |
+                      +-------+--------------+------+
+                              |              |
+           (Token Estimation) |              | (Custom TPR Filtering & Selection)
+                              v              v
+                      +---------------+     +--------------------------------+
+                      | Tiktoken cl100|     |  OOP LiteLLM Router Wrapper    |
+                      | k / Fallback  |     |   - Simple-Shuffle/Latency     |
+                      +---------------+     |   - Fallbacks & Retries        |
+                                            +---------------+----------------+
+                                                            |
+                 +-----------------+----------+-------------+------------+-----------------+
+                 |                 |          |                          |                 |
+                 v                 v          v                          v                 v
+          +------------+     +-----------+  +-------------+       +------------+     +-----------+
+          |    Groq    |     |  Cerebras |  | Together AI |       |   Ollama   |     |  Mistral  |
+          | Llama3 70B |     | Llama3 8B |  | Mixtral 8x7B|       | Llama3 (L) |     |  Large    |
+          +------------+     +-----------+  +-------------+       +------------+     +-----------+
 ```
 
 ---
 
-## 🔑 Required Environment Variables
-
-| Variable | Description | Required |
-|---|---|---|
-| `GROQ_API_KEY` | Groq API key ([console.groq.com](https://console.groq.com)) | ✅ |
-| `CEREBRAS_API_KEY` | Cerebras API key ([cloud.cerebras.ai](https://cloud.cerebras.ai)) | ✅ |
-| `TOGETHERAI_API_KEY` | Together AI key ([api.together.ai](https://api.together.ai)) | ✅ |
-| `MISTRAL_API_KEY` | Mistral API key (optional) | ⬜ |
-| `PORT` | HTTP port (auto-set by cloud platform) | auto |
-| `OLLAMA_API_BASE` | Local Ollama URL (local only) | ⬜ |
-
-See [`.env.example`](.env.example) for a full template.
-
----
-
-## ✨ Key Features
-
-| Feature | Details |
-|---|---|
-| 🔀 **Intelligent Routing** | `usage-based-routing` — automatically balances load across Groq, Cerebras, Together AI |
-| 🛡️ **PII Shield (DeBERTa-v3)** | Real-time detection of 10+ PII entity types with BLOCK / MASK / REWRITE controls per entity |
-| 📊 **Live Dashboard** | Streamlit UI served at `/` — no separate port, works on any cloud |
-| ⚡ **OpenAI-Compatible API** | Drop-in replacement for any OpenAI SDK client |
-| 🔁 **Auto Fallbacks** | `primary-cluster → backup-cluster` with context-window escalation |
-| 🏗️ **Single Container** | One Docker image, one port, one URL |
-
----
-
-## 🏗️ Architecture
-
-```
-Browser → https://myapp.com/           (single public URL)
-              │
-              ▼
-     ┌─────────────────────┐
-     │   FastAPI Gateway   │  port $PORT (e.g. 8000)
-     │                     │
-     │  ┌───────────────┐  │  HTTP + WebSocket reverse proxy
-     │  │  Streamlit UI │◄─┼─── / (root) and /_stcore/* paths
-     │  │  (port 8501)  │  │
-     │  └───────────────┘  │
-     │                     │
-     │  ┌───────────────┐  │
-     │  │  LLM Router   │◄─┼─── /v1/chat/completions
-     │  │  DeBERTa PII  │  │
-     │  └───────────────┘  │
-     └─────────────────────┘
-              │
-   ┌──────────┼──────────┐
-   ▼          ▼          ▼
- Groq     Cerebras   Together AI
-```
-
----
-
-## 📁 Directory Structure
+## Directory Structure
 
 ```text
 LiteLLM_Proxy/
-├── Dockerfile           # Multi-stage build (model pre-cache, slim runtime)
-├── .dockerignore        # Keeps secrets out of the image
-├── railway.toml         # Railway deployment config
-├── render.yaml          # Render.com deployment blueprint
-├── fly.toml             # Fly.io app configuration
-├── Procfile             # Heroku/Railway fallback entrypoint
-├── .env.example         # Environment variable template (safe to commit)
-├── config.yaml          # LiteLLM routing, capacity, and fallback settings
+├── config.yaml          # LiteLLM YAML routing, capacity and fallback settings
 ├── requirements.txt     # Python production dependencies
-├── main.py              # Unified entrypoint: spawns Streamlit + starts FastAPI
-├── app.py               # Streamlit dashboard frontend
-├── test_proxy.py        # Automated unit & integration test suite
-└── proxy/               # FastAPI package
-    ├── app.py           # Routes, Streamlit reverse proxy, PII config endpoints
-    ├── router.py        # Token estimation, routing, DeBERTa PII guardrail
-    ├── config.py        # Pydantic config models
-    └── guardrails/      # DeBERTa-v3 PII detection engine
+├── main.py              # Microservice server startup script
+├── test_proxy.py        # Complete automated OOP unit & integration test suite
+├── .env                 # Local active credentials (includes sandbox defaults)
+├── .env.example         # Template environment file
+└── proxy/               # Class-based python package core
+    ├── __init__.py      # Package definitions & exports
+    ├── config.py        # OOP Pydantic configurations
+    ├── router.py        # OOP Token estimation and route optimizer wrapper
+    └── app.py           # Class-based FastAPI controllers & OpenAI schemas
 ```
 
 ---
 
-## 🖥️ Local Development
+## Installation & Setup
 
-### 1. Clone & Install
-
+### 1. Clone & Navigate to Workspace
 ```bash
-git clone https://github.com/sanvity/LiteLLM_Proxy.git
-cd LiteLLM_Proxy
+cd /Users/sanvijain/EY_DataAndAI/LiteLLM_Proxy
+```
 
+### 2. Set Up a Virtual Environment & Install Dependencies
+```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure API Keys
-
-```bash
-cp .env.example .env
-# Edit .env and add your API keys
+### 3. Configure API Credentials
+Edit the active `.env` file to insert your specific provider API keys:
+```env
+GROQ_API_KEY=gsk_...
+CEREBRAS_API_KEY=csk_...
+TOGETHERAI_API_KEY=...
+MISTRAL_API_KEY=...
+OLLAMA_API_BASE=http://localhost:11434
 ```
+*Note: If environment variables remain set to mock placeholders (like `mock_groq_key`), the proxy will automatically operate in the zero-cost Mock Sandbox mode.*
 
-### 3. Start the Application
+---
 
+## Running the Application
+
+### Start the Proxy Server
+Launch the ASGI server locally using:
 ```bash
 python main.py
 ```
+This boots up the proxy on `http://0.0.0.0:8000`.
 
-The app will:
-1. Spawn the Streamlit dashboard on internal port 8501
-2. Wait for Streamlit to be ready
-3. Start FastAPI on port 8000
-
-Then visit **http://localhost:8000** — the full UI loads in your browser.
-
----
-
-## 🐳 Local Docker Build
-
-```bash
-docker build -t litellm-gateway .
-docker run -p 8000:8000 --env-file .env litellm-gateway
-
-# Visit http://localhost:8000
-```
+### Health & Metrics Endpoints
+- **Liveness Probe**: `GET http://localhost:8000/health`
+- **Observability metrics**: `GET http://localhost:8000/metrics`
+- **OpenAI Model Catalog**: `GET http://localhost:8000/v1/models`
 
 ---
 
-## 🧪 Running Tests
+## Verifying the Proxy
+
+We provide a complete automated unit and integration test suite that tests configurations, token calculation, TPR routing, mock sandbox modes, and full HTTP integrations:
 
 ```bash
 python -m unittest test_proxy.py
 ```
 
----
-
-## 📡 API Reference
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/` | GET | Streamlit dashboard (proxied) |
-| `/health` | GET | Liveness probe — returns `{"status": "healthy"}` |
-| `/metrics` | GET | Real-time routing and token metrics |
-| `/v1/models` | GET | List virtual and physical models |
-| `/v1/chat/completions` | POST | OpenAI-compatible chat completion |
-| `/ui/pii-config` | GET/POST | Read/update PII guardrail configuration |
-| `/preference-config` | GET/POST | Read/update model preference routing |
-| `/old-ui` | GET | Legacy HTML dashboard (debugging) |
-
-### Example Request
+### Client Request Example (cURL)
+You can call the proxy using any standard OpenAI-compatible client library (e.g. LangChain, OpenAI Python SDK) or simple cURL requests:
 
 ```bash
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "primary-cluster",
-    "messages": [{"role": "user", "content": "Hello!"}],
+    "model": "oss-chat-fast",
+    "messages": [
+      {"role": "user", "content": "Explain the concept of quantum computing."}
+    ],
     "temperature": 0.7,
     "max_tokens": 500
   }'

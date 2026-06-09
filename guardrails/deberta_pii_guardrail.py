@@ -1,18 +1,8 @@
-import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union, Any, Tuple
 import asyncio
-import torch
 from litellm.integrations.custom_guardrail import CustomGuardrail
 from litellm._logging import verbose_proxy_logger
-
-# Ensure Hugging Face cache is set to a consistent local directory in the project root
-project_root = os.path.dirname(os.path.abspath(__file__))
-if os.path.basename(project_root) == "guardrails":
-    project_root = os.path.dirname(project_root)
-cache_dir = os.path.join(project_root, "model_cache")
-os.environ["HF_HOME"] = cache_dir
-os.environ["TRANSFORMERS_CACHE"] = cache_dir
 
 SERVER_NER_MODEL       = "Isotonic/deberta-v3-base_finetuned_ai4privacy_v2"
 SERVER_OLLAMA_BASE_URL = "http://localhost:11434"
@@ -123,11 +113,6 @@ class DeBERTaPIIGuardrail(CustomGuardrail):
     @property
     def model(self):
         if self._model is None:
-            # Optimize memory & CPU overhead by limiting PyTorch threads to 1
-            import torch
-            torch.set_num_threads(1)
-            torch.set_num_interop_threads(1)
-            
             verbose_proxy_logger.info(f"[DeBERTa PII] Loading {SERVER_NER_MODEL} pipeline")
             from transformers import pipeline
             self._model = pipeline(
@@ -165,10 +150,7 @@ class DeBERTaPIIGuardrail(CustomGuardrail):
         if not text:
             return []
         
-        # Disable gradients during classification to save memory
-        import torch
-        with torch.no_grad():
-            results = self.model(text)
+        results = self.model(text)
         entities = []
         for r in results:
             score = float(r.get("score", 0.0))
