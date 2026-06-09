@@ -373,7 +373,7 @@ with tab_testing:
     # User Input Query
     user_query = st.text_area(
         "Enter Query Prompt to Test",
-        value="Write a Python script to compute Fibonacci numbers using dynamic programming, or summarize my latest API traffic reports.",
+        value="I am Samuel, my phone numbers are +1 213 555-0123 and +91 9876534567 , Aadhaar is 9988-7766-5544, SSN: 111-22-3333. my email is sam@gmail.com,  check which all accounts are linked together?  Also my credit card number is 2345 5432 8765 , check my account balance."
         height=120
     )
     
