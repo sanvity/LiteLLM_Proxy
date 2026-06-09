@@ -287,9 +287,7 @@ class LiteLLMProxyApp:
                 self.training_error = f"{str(e)}\n\n{error_trace}"
                 self.training_progress = "Training failed."
 
-        @self.app.post("/ui/train-deberta")
-        async def train_deberta(request: TrainDebertaRequest, background_tasks: BackgroundTasks):
-            """Triggers asynchronous fine-tuning of the DeBERTa PII guardrail model."""
+        async def execute_train(request: TrainDebertaRequest, background_tasks: BackgroundTasks):
             if self.training_status == "training":
                 raise HTTPException(status_code=400, detail="Training is already in progress.")
                 
@@ -300,24 +298,53 @@ class LiteLLMProxyApp:
             background_tasks.add_task(run_training_in_background, request)
             return {"status": "training", "message": "DeBERTa fine-tuning background thread spawned successfully."}
 
-        @self.app.get("/ui/train-deberta/status")
-        async def train_deberta_status():
-            """Returns the current status of the model training process."""
+        async def execute_status():
             return {
                 "status": self.training_status,
                 "progress": self.training_progress,
                 "error": self.training_error
             }
 
-        @self.app.post("/ui/train-deberta/reset")
-        async def train_deberta_reset():
-            """Resets the training status to idle (allowed only if not actively training)."""
+        async def execute_reset():
             if self.training_status == "training":
                 raise HTTPException(status_code=400, detail="Cannot reset while training is actively running.")
             self.training_status = "idle"
             self.training_progress = ""
             self.training_error = None
             return {"status": "success", "message": "Training status reset to idle."}
+
+        @self.app.post("/ui/train-deberta")
+        async def train_deberta(request: TrainDebertaRequest, background_tasks: BackgroundTasks):
+            """Triggers asynchronous fine-tuning of the DeBERTa PII guardrail model (UI endpoint)."""
+            return await execute_train(request, background_tasks)
+
+        @self.app.post("/v1/deberta/train")
+        @self.app.post("/deberta/train")
+        async def train_deberta_api(request: TrainDebertaRequest, background_tasks: BackgroundTasks):
+            """Triggers asynchronous fine-tuning of the DeBERTa PII guardrail model (API endpoint)."""
+            return await execute_train(request, background_tasks)
+
+        @self.app.get("/ui/train-deberta/status")
+        async def train_deberta_status():
+            """Returns the current status of the model training process (UI endpoint)."""
+            return await execute_status()
+
+        @self.app.get("/v1/deberta/train/status")
+        @self.app.get("/deberta/train/status")
+        async def train_deberta_status_api():
+            """Returns the current status of the model training process (API endpoint)."""
+            return await execute_status()
+
+        @self.app.post("/ui/train-deberta/reset")
+        async def train_deberta_reset():
+            """Resets the training status to idle (allowed only if not actively training) (UI endpoint)."""
+            return await execute_reset()
+
+        @self.app.post("/v1/deberta/train/reset")
+        @self.app.post("/deberta/train/reset")
+        async def train_deberta_reset_api():
+            """Resets the training status to idle (allowed only if not actively training) (API endpoint)."""
+            return await execute_reset()
 
 
 

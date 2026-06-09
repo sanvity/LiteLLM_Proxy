@@ -101,7 +101,7 @@ class TestLiteLLMProxy(unittest.TestCase):
             mock_sandbox=True
         ))
         model_large = response_large["model"]
-        self.assertEqual(model_large, "together_ai/meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo")
+        self.assertEqual(model_large, "together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo")
         logger.info(f"Huge prompt auto-escalated correctly in sandbox to backup premium cluster: {model_large}")
  
     def test_4_mock_sandbox_completion(self):
@@ -378,7 +378,7 @@ class TestLiteLLMProxy(unittest.TestCase):
         base_url = "http://127.0.0.1:8090"
         
         # 1. Check training status is initially idle or completed
-        status_resp = requests.get(f"{base_url}/ui/train-deberta/status")
+        status_resp = requests.get(f"{base_url}/v1/deberta/train/status")
         self.assertEqual(status_resp.status_code, 200)
         self.assertIn(status_resp.json()["status"], ["idle", "completed"])
         
@@ -398,7 +398,7 @@ class TestLiteLLMProxy(unittest.TestCase):
             "batch_size": 1
         }
         
-        train_resp = requests.post(f"{base_url}/ui/train-deberta", json=payload)
+        train_resp = requests.post(f"{base_url}/v1/deberta/train", json=payload)
         self.assertEqual(train_resp.status_code, 200)
         self.assertEqual(train_resp.json()["status"], "training")
         
@@ -406,7 +406,7 @@ class TestLiteLLMProxy(unittest.TestCase):
         completed = False
         for _ in range(30):
             time.sleep(2.0)
-            status_resp = requests.get(f"{base_url}/ui/train-deberta/status")
+            status_resp = requests.get(f"{base_url}/v1/deberta/train/status")
             status = status_resp.json()["status"]
             logger.info(f"Training status: {status} - Progress: {status_resp.json()['progress']}")
             if status == "completed":
