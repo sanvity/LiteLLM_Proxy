@@ -29,8 +29,12 @@ ENV HOST=0.0.0.0
 ENV TRANSFORMERS_CACHE=/app/model_cache
 ENV HF_HOME=/app/model_cache
 
+# Make model cache directory writable for Hugging Face non-root container execution
+RUN mkdir -p /app/model_cache && chmod -R 777 /app/model_cache
+
 # Pre-download DeBERTa-v3 PII model weights into image layer
-RUN python -c "from transformers import pipeline; pipeline('token-classification', model='Isotonic/deberta-v3-base_finetuned_ai4privacy_v2')"
+RUN python -c "from transformers import pipeline; pipeline('token-classification', model='Isotonic/deberta-v3-base_finetuned_ai4privacy_v2')" && \
+    chmod -R 777 /app/model_cache
 
 
 # Expose port (Railway overrides this with $PORT)
