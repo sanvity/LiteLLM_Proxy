@@ -2,15 +2,15 @@
   "rewrites": [
     {
       "source": "/health",
-      "destination": "https://YOUR-BACKEND-ON-RENDER.onrender.com/health"
+      "destination": "https://litellm-proxy-backend.onrender.com/health"
     },
     {
       "source": "/metrics",
-      "destination": "https://YOUR-BACKEND-ON-RENDER.onrender.com/metrics"
+      "destination": "https://litellm-proxy-backend.onrender.com/metrics"
     },
     {
       "source": "/v1/:path*",
-      "destination": "https://YOUR-BACKEND-ON-RENDER.onrender.com/v1/:path*"
+      "destination": "https://litellm-proxy-backend.onrender.com/v1/:path*"
     }
   ]
 }
