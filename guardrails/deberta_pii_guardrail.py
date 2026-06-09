@@ -100,9 +100,24 @@ def canonicalize_label(model_label: str) -> str:
     return model_label.lower()
 
 
+active_guardrails = []
+
+def get_ner_model_path() -> str:
+    import os
+    local_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "finetuned-deberta"))
+    if os.path.exists(os.path.join(local_path, "config.json")):
+        return local_path
+    return "Isotonic/deberta-v3-base_finetuned_ai4privacy_v2"
+
 class DeBERTaPIIGuardrail(CustomGuardrail):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self._model = None
+        if self not in active_guardrails:
+            active_guardrails.append(self)
+
+    def reload_model(self):
+        verbose_proxy_logger.info("[DeBERTa PII] Reloading model pipeline...")
         self._model = None
 
     def should_run_guardrail(self, data, event_type) -> bool:
@@ -113,11 +128,12 @@ class DeBERTaPIIGuardrail(CustomGuardrail):
     @property
     def model(self):
         if self._model is None:
-            verbose_proxy_logger.info(f"[DeBERTa PII] Loading {SERVER_NER_MODEL} pipeline")
+            model_path = get_ner_model_path()
+            verbose_proxy_logger.info(f"[DeBERTa PII] Loading {model_path} pipeline")
             from transformers import pipeline
             self._model = pipeline(
                 "token-classification",
-                model=SERVER_NER_MODEL,
+                model=model_path,
                 aggregation_strategy="simple"
             )
             verbose_proxy_logger.info("[DeBERTa PII] Model ready.")
@@ -360,6 +376,178 @@ class DeBERTaRegisterCallback(CustomLogger):
         super().__init__(**kwargs)
 
 deberta_register_callback = DeBERTaRegisterCallback()
+
+
+def get_model_label_ids(id2label: dict, canonicalize_fn, entity_label: str) -> Tuple[Optional[int], Optional[int]]:
+    entity_label_clean = entity_label.upper().replace("_", "").replace(" ", "")
+    candidates = []
+    
+    # First attempt: Match by canonicalized label name
+    for idx, label in id2label.items():
+        if label.startswith("B-"):
+            suffix = label[2:]
+            if canonicalize_fn(suffix) == entity_label:
+                i_idx = None
+                for idx2, label2 in id2label.items():
+                    if label2 == f"I-{suffix}":
+                        i_idx = idx2
+                        break
+                if i_idx is not None:
+                    candidates.append((idx, i_idx))
+                    
+    # Second attempt: Match exactly by suffix name (e.g. "EMAIL", "FIRSTNAME")
+    if not candidates:
+        for idx, label in id2label.items():
+            if label.startswith("B-"):
+                suffix = label[2:]
+                suffix_clean = suffix.upper().replace("_", "").replace(" ", "")
+                if suffix_clean == entity_label_clean:
+                    i_idx = None
+                    for idx2, label2 in id2label.items():
+                        if label2 == f"I-{suffix}":
+                            i_idx = idx2
+                            break
+                    if i_idx is not None:
+                        candidates.append((idx, i_idx))
+                        
+    if candidates:
+        candidates.sort(key=lambda x: x[0])
+        return candidates[0]
+        
+    return None, None
+
+
+def train_deberta_model(
+    dataset: List[Dict[str, Any]],
+    output_dir: str,
+    epochs: int = 3,
+    learning_rate: float = 5e-5,
+    batch_size: int = 8
+):
+    """
+    Supervised fine-tuning of the DeBERTa token classification model on custom PII samples.
+    """
+    import os
+    import torch
+    from transformers import (
+        AutoTokenizer,
+        AutoModelForTokenClassification,
+        TrainingArguments,
+        Trainer,
+        DataCollatorForTokenClassification
+    )
+    
+    base_model_name = "Isotonic/deberta-v3-base_finetuned_ai4privacy_v2"
+    
+    # If a previous fine-tuned model exists, load from it to accumulate training
+    if os.path.exists(os.path.join(output_dir, "config.json")):
+        model_name_or_path = output_dir
+        verbose_proxy_logger.info(f"[DeBERTa Training] Resuming training from local path: {model_name_or_path}")
+    else:
+        model_name_or_path = base_model_name
+        verbose_proxy_logger.info(f"[DeBERTa Training] Loading base pre-trained model: {model_name_or_path}")
+        
+    tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+    model = AutoModelForTokenClassification.from_pretrained(model_name_or_path)
+    
+    id2label = model.config.id2label
+    
+    tokenized_inputs = []
+    
+    for item in dataset:
+        text = item.get("text", "")
+        entities = item.get("entities", [])
+        
+        # Tokenize with offsets mapping
+        encodings = tokenizer(
+            text,
+            return_offsets_mapping=True,
+            truncation=True,
+            padding=False
+        )
+        
+        offset_mapping = encodings["offset_mapping"]
+        labels = []
+        
+        for idx, (start, end) in enumerate(offset_mapping):
+            if start == end:
+                labels.append(-100) # Ignore special tokens in loss
+                continue
+                
+            assigned_label_id = 0
+            
+            for ent in entities:
+                ent_start = ent.get("start")
+                ent_end = ent.get("end")
+                ent_label = ent.get("label")
+                
+                # Check character boundaries overlap
+                if start >= ent_start and end <= ent_end:
+                    is_start = (start == ent_start)
+                    b_id, i_id = get_model_label_ids(id2label, canonicalize_label, ent_label)
+                    
+                    if is_start and b_id is not None:
+                        assigned_label_id = b_id
+                    elif i_id is not None:
+                        assigned_label_id = i_id
+                    elif b_id is not None:
+                        assigned_label_id = b_id
+                    break
+            
+            labels.append(assigned_label_id)
+            
+        encodings["labels"] = labels
+        encodings.pop("offset_mapping")
+        tokenized_inputs.append(encodings)
+        
+    class NERDataset(torch.utils.data.Dataset):
+        def __init__(self, encodings):
+            self.encodings = encodings
+            
+        def __getitem__(self, idx):
+            return {key: torch.tensor(val) for key, val in self.encodings[idx].items()}
+            
+        def __len__(self):
+            return len(self.encodings)
+            
+    train_dataset = NERDataset(tokenized_inputs)
+    
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        num_train_epochs=epochs,
+        per_device_train_batch_size=batch_size,
+        learning_rate=learning_rate,
+        weight_decay=0.01,
+        logging_steps=1,
+        save_strategy="no",
+        report_to="none"
+    )
+    
+    data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
+    
+    import transformers
+    from packaging import version
+    
+    trainer_kwargs = {
+        "model": model,
+        "args": training_args,
+        "train_dataset": train_dataset,
+        "data_collator": data_collator
+    }
+    if version.parse(transformers.__version__) >= version.parse("5.0.0"):
+        trainer_kwargs["processing_class"] = tokenizer
+    else:
+        trainer_kwargs["tokenizer"] = tokenizer
+        
+    trainer = Trainer(**trainer_kwargs)
+    
+    verbose_proxy_logger.info("[DeBERTa Training] Starting training arguments loop...")
+    trainer.train()
+    
+    os.makedirs(output_dir, exist_ok=True)
+    trainer.save_model(output_dir)
+    tokenizer.save_pretrained(output_dir)
+    verbose_proxy_logger.info(f"[DeBERTa Training] Saved fine-tuned checkpoint model to: {output_dir}")
 
 
 if __name__ == "__main__":

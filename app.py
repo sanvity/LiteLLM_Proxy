@@ -4,6 +4,7 @@ import os
 import time
 import re
 import yaml
+import json
 
 # Set minimal, professional industry-appropriate page configuration
 st.set_page_config(
@@ -223,9 +224,10 @@ with st.sidebar:
 st.markdown("<div class='main-header'>LiteLLM Gateway Console & Routing Proxy</div>", unsafe_allow_html=True)
 st.markdown(f"<div class='sub-header'>Minimalist enterprise routing controls configured for <b>{st.session_state.agent_name}</b></div>", unsafe_allow_html=True)
 
-tab_backend, tab_testing = st.tabs([
+tab_backend, tab_testing, tab_training = st.tabs([
     "Page 1: Backend Gateway Controls",
-    "Page 2: User Testing Interface"
+    "Page 2: User Testing Interface",
+    "Page 3: Model Fine-Tuning"
 ])
 
 # ---------------------------------------------------------------------
@@ -498,4 +500,152 @@ with tab_testing:
                 with col_hist_right:
                     st.markdown("<span style='font-size:0.75rem; font-weight:600; color:#4B5563;'>Gateway Response</span>", unsafe_allow_html=True)
                     st.success(item["response"])
+
+
+# ---------------------------------------------------------------------
+# PAGE 3: MODEL FINE-TUNING
+# ---------------------------------------------------------------------
+with tab_training:
+    st.markdown("<div class='card-title'>DeBERTa-v3 PII Model Fine-Tuning Console</div>", unsafe_allow_html=True)
+    st.write("Further train the PII token-classification model locally with custom domain-specific data to improve precision and recall.")
+    
+    # 1. Fetch current training status from backend
+    status_data = {"status": "idle", "progress": "", "error": None}
+    try:
+        r = requests.get(f"{PROXY_URL}/ui/train-deberta/status", timeout=2.0)
+        if r.status_code == 200:
+            status_data = r.json()
+    except Exception as e:
+        st.warning(f"Could not check training status from backend proxy: {e}")
+        
+    current_status = status_data.get("status", "idle")
+    current_progress = status_data.get("progress", "")
+    current_error = status_data.get("error")
+    
+    # 2. Render Status HUD Card
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    col_hud1, col_hud2 = st.columns([1, 3])
+    with col_hud1:
+        st.markdown("<span class='metadata-label'>Training Status</span>", unsafe_allow_html=True)
+        if current_status == "idle":
+            st.markdown("<h3 style='color:#6B7280; margin-top:5px; font-weight:600;'>IDLE</h3>", unsafe_allow_html=True)
+        elif current_status == "training":
+            st.markdown("<h3 style='color:#3B82F6; margin-top:5px; font-weight:600;'>TRAINING</h3>", unsafe_allow_html=True)
+        elif current_status == "completed":
+            st.markdown("<h3 style='color:#10B981; margin-top:5px; font-weight:600;'>COMPLETED</h3>", unsafe_allow_html=True)
+        elif current_status == "failed":
+            st.markdown("<h3 style='color:#EF4444; margin-top:5px; font-weight:600;'>FAILED</h3>", unsafe_allow_html=True)
+            
+    with col_hud2:
+        st.markdown("<span class='metadata-label'>Current Progress / Action</span>", unsafe_allow_html=True)
+        if current_status == "idle":
+            st.write("Ready to receive training parameters and dataset inputs.")
+        elif current_status == "training":
+            st.write(f"⏳ **{current_progress}**")
+        elif current_status == "completed":
+            st.write("🎉 **Model successfully fine-tuned!** The proxy has reloaded the active pipelines to use the new weights.")
+        elif current_status == "failed":
+            st.write("❌ **Training aborted due to an error.** See details below.")
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # 3. Handle status-specific display states
+    if current_status == "training":
+        # Poll status in loop using progress indicator
+        st.spinner("Fine-tuning model. Please wait...")
+        time.sleep(3.0)
+        st.rerun()
+        
+    elif current_status == "completed":
+        st.balloons()
+        if st.button("Reset Console Status"):
+            try:
+                requests.post(f"{PROXY_URL}/ui/train-deberta/reset", timeout=2.0)
+                st.rerun()
+            except Exception:
+                pass
+                
+    elif current_status == "failed":
+        st.error("Training Traceback Log:")
+        st.code(current_error or "Unknown error occurred.")
+        if st.button("Clear Error & Reset"):
+            try:
+                requests.post(f"{PROXY_URL}/ui/train-deberta/reset", timeout=2.0)
+                st.rerun()
+            except Exception:
+                pass
+                
+    else: # idle status - render configuration editor
+        st.markdown("<div class='card-title'>Configure Hyperparameters</div>", unsafe_allow_html=True)
+        col_hp1, col_hp2, col_hp3 = st.columns(3)
+        with col_hp1:
+            epochs = st.number_input("Epochs", min_value=1, max_value=20, value=3, step=1)
+        with col_hp2:
+            learning_rate = st.number_input("Learning Rate", min_value=1e-6, max_value=1e-2, value=5e-5, format="%.6f")
+        with col_hp3:
+            batch_size = st.number_input("Batch Size", min_value=1, max_value=64, value=8, step=1)
+            
+        st.markdown("<div style='height:15px;'></div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>Input Training Dataset (JSON Format)</div>", unsafe_allow_html=True)
+        st.write("Define text training samples and label offsets for NER Token Classification. Matches canonical labels.")
+        
+        default_dataset = [
+            {
+                "text": "Hello, my name is Arthur Pendragon and my email address is arthur@camelot.org.",
+                "entities": [
+                    {"start": 18, "end": 35, "label": "person"},
+                    {"start": 59, "end": 77, "label": "email address"}
+                ]
+            },
+            {
+                "text": "Please charge the balance to card number 4111-2222-3333-4444.",
+                "entities": [
+                    {"start": 41, "end": 60, "label": "credit card number"}
+                ]
+            },
+            {
+                "text": "My SSN is 000-12-3456 and I live at 12 Round Table Lane, London.",
+                "entities": [
+                    {"start": 10, "end": 21, "label": "social security number"},
+                    {"start": 36, "end": 63, "label": "address"}
+                ]
+            }
+        ]
+        
+        dataset_json = st.text_area(
+            "Training Dataset JSON",
+            value=json.dumps(default_dataset, indent=2),
+            height=300
+        )
+        
+        if st.button("Start Fine-Tuning", type="primary", use_container_width=True):
+            try:
+                parsed_dataset = json.loads(dataset_json)
+                if not isinstance(parsed_dataset, list):
+                    st.error("Dataset must be a list of training samples.")
+                else:
+                    # Validate format
+                    valid = True
+                    for sample in parsed_dataset:
+                        if "text" not in sample or "entities" not in sample:
+                            st.error("Each sample must contain 'text' and 'entities' properties.")
+                            valid = False
+                            break
+                    if valid:
+                        payload = {
+                            "dataset": parsed_dataset,
+                            "epochs": int(epochs),
+                            "learning_rate": float(learning_rate),
+                            "batch_size": int(batch_size)
+                        }
+                        r = requests.post(f"{PROXY_URL}/ui/train-deberta", json=payload, timeout=5.0)
+                        if r.status_code == 200:
+                            st.success("Training task submitted successfully. Starting background threads...")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error(f"Failed to submit training job: {r.text}")
+            except json.JSONDecodeError as je:
+                st.error(f"Invalid JSON Syntax: {je}")
+            except Exception as e:
+                st.error(f"Submission failed: {e}")
 

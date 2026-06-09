@@ -11,3 +11,4 @@ requests>=2.31.0
 streamlit>=1.38.0
 transformers>=4.40.0
 torch==2.4.0+cpu
+accelerate>=1.1.0

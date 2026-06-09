@@ -372,6 +372,58 @@ class TestLiteLLMProxy(unittest.TestCase):
             self.router.pii_enabled = old_pii_enabled
             self.router.pii_action = old_pii_action
 
+    def test_9_deberta_model_training(self):
+        """Verifies the DeBERTa model training and reload endpoints."""
+        logger.info("--- Test 9: DeBERTa PII Model Training ---")
+        base_url = "http://127.0.0.1:8090"
+        
+        # 1. Check training status is initially idle or completed
+        status_resp = requests.get(f"{base_url}/ui/train-deberta/status")
+        self.assertEqual(status_resp.status_code, 200)
+        self.assertIn(status_resp.json()["status"], ["idle", "completed"])
+        
+        # 2. Trigger training with a very small 1-sample, 1-epoch payload
+        payload = {
+            "dataset": [
+                {
+                    "text": "My name is John Doe and my email is john@doe.com.",
+                    "entities": [
+                        {"start": 11, "end": 19, "label": "person"},
+                        {"start": 36, "end": 48, "label": "email address"}
+                    ]
+                }
+            ],
+            "epochs": 1,
+            "learning_rate": 5e-5,
+            "batch_size": 1
+        }
+        
+        train_resp = requests.post(f"{base_url}/ui/train-deberta", json=payload)
+        self.assertEqual(train_resp.status_code, 200)
+        self.assertEqual(train_resp.json()["status"], "training")
+        
+        # 3. Poll status until completed (timeout of 60 seconds)
+        completed = False
+        for _ in range(30):
+            time.sleep(2.0)
+            status_resp = requests.get(f"{base_url}/ui/train-deberta/status")
+            status = status_resp.json()["status"]
+            logger.info(f"Training status: {status} - Progress: {status_resp.json()['progress']}")
+            if status == "completed":
+                completed = True
+                break
+            elif status == "failed":
+                self.fail(f"Training failed with error: {status_resp.json()['error']}")
+                
+        self.assertTrue(completed, "Training did not complete within the 60-second limit.")
+        
+        # 4. Verify local model files were generated
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        local_model_dir = os.path.join(current_dir, "models", "finetuned-deberta")
+        self.assertTrue(os.path.exists(os.path.join(local_model_dir, "config.json")), "Local config.json was not generated.")
+        logger.info("DeBERTa fine-tuning integration test passed successfully.")
+
 if __name__ == "__main__":
     unittest.main()
 

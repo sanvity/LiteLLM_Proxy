@@ -1,13 +1,28 @@
 import os
 import time
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Depends, Body
+from fastapi import FastAPI, HTTPException, Depends, Body, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .config import ProxyConfig
 from .router import LiteLLMProxyRouter
+
+class EntityLabel(BaseModel):
+    start: int = Field(..., description="Start character offset of the entity")
+    end: int = Field(..., description="End character offset of the entity")
+    label: str = Field(..., description="Label of the entity (e.g. person, email address)")
+
+class TrainingSample(BaseModel):
+    text: str = Field(..., description="The input text sample")
+    entities: List[EntityLabel] = Field(..., description="List of labeled entities in the text")
+
+class TrainDebertaRequest(BaseModel):
+    dataset: List[TrainingSample] = Field(..., description="List of training text samples and labels")
+    epochs: Optional[int] = Field(default=3, description="Number of training epochs")
+    learning_rate: Optional[float] = Field(default=5e-5, description="Learning rate")
+    batch_size: Optional[int] = Field(default=8, description="Batch size for training")
 
 class ChatMessage(BaseModel):
     role: str = Field(..., description="Role of the message author (system, user, assistant)")
@@ -34,6 +49,11 @@ class LiteLLMProxyApp:
         # Initialize configuration and the routing engine
         self.config = ProxyConfig(config_path=config_path)
         self.router = LiteLLMProxyRouter(config=self.config)
+        
+        # Training state parameters
+        self.training_status = "idle"
+        self.training_progress = ""
+        self.training_error = None
         
         # Initialize FastAPI app
         self.app = FastAPI(
@@ -221,6 +241,83 @@ class LiteLLMProxyApp:
             self.router.pii_action = config.pii_action
             self.router.pii_policy = config.pii_policy
             return {"status": "success", "message": f"PII Guardrail configuration synchronized in memory: enabled={config.pii_enabled}, action={config.pii_action}."}
+
+        def run_training_in_background(req: TrainDebertaRequest):
+            try:
+                self.training_status = "training"
+                self.training_progress = "Tokenizing and prepping dataset..."
+                self.training_error = None
+                
+                # Format dataset to dict for the training function
+                dataset_dicts = []
+                for sample in req.dataset:
+                    ents = [{"start": e.start, "end": e.end, "label": e.label} for e in sample.entities]
+                    dataset_dicts.append({
+                        "text": sample.text,
+                        "entities": ents
+                    })
+                
+                # Resolve output directory
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                output_dir = os.path.abspath(os.path.join(current_dir, "..", "models", "finetuned-deberta"))
+                
+                self.training_progress = "Executing Hugging Face Trainer fine-tuning loop..."
+                
+                from guardrails.deberta_pii_guardrail import train_deberta_model, active_guardrails
+                
+                train_deberta_model(
+                    dataset=dataset_dicts,
+                    output_dir=output_dir,
+                    epochs=req.epochs if req.epochs is not None else 3,
+                    learning_rate=req.learning_rate if req.learning_rate is not None else 5e-5,
+                    batch_size=req.batch_size if req.batch_size is not None else 8
+                )
+                
+                self.training_progress = "Reloading active model pipelines..."
+                # Reload model in all running instances
+                for cb in active_guardrails:
+                    cb.reload_model()
+                    
+                self.training_status = "completed"
+                self.training_progress = "Training successfully completed. Local model active."
+            except Exception as e:
+                import traceback
+                error_trace = traceback.format_exc()
+                self.training_status = "failed"
+                self.training_error = f"{str(e)}\n\n{error_trace}"
+                self.training_progress = "Training failed."
+
+        @self.app.post("/ui/train-deberta")
+        async def train_deberta(request: TrainDebertaRequest, background_tasks: BackgroundTasks):
+            """Triggers asynchronous fine-tuning of the DeBERTa PII guardrail model."""
+            if self.training_status == "training":
+                raise HTTPException(status_code=400, detail="Training is already in progress.")
+                
+            self.training_status = "training"
+            self.training_progress = "Starting training background task..."
+            self.training_error = None
+            
+            background_tasks.add_task(run_training_in_background, request)
+            return {"status": "training", "message": "DeBERTa fine-tuning background thread spawned successfully."}
+
+        @self.app.get("/ui/train-deberta/status")
+        async def train_deberta_status():
+            """Returns the current status of the model training process."""
+            return {
+                "status": self.training_status,
+                "progress": self.training_progress,
+                "error": self.training_error
+            }
+
+        @self.app.post("/ui/train-deberta/reset")
+        async def train_deberta_reset():
+            """Resets the training status to idle (allowed only if not actively training)."""
+            if self.training_status == "training":
+                raise HTTPException(status_code=400, detail="Cannot reset while training is actively running.")
+            self.training_status = "idle"
+            self.training_progress = ""
+            self.training_error = None
+            return {"status": "success", "message": "Training status reset to idle."}
 
 
 
