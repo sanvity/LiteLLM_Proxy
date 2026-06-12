@@ -127,7 +127,7 @@ class LiteLLMProxyRouter:
             self.pii_guardrail = DeBERTaPIIGuardrail()
         return self.pii_guardrail
 
-    async def _sanitize_response(self, response: Dict[str, Any], guardrailed_query: Optional[str] = None) -> Dict[str, Any]:
+    async def _sanitize_response(self, response: Dict[str, Any], guardrailed_query: Optional[str] = None, bypass_guardrails: bool = False) -> Dict[str, Any]:
         if guardrailed_query is not None:
             if not isinstance(response, dict):
                 try:
@@ -142,7 +142,7 @@ class LiteLLMProxyRouter:
                     response["guardrailed_query"] = guardrailed_query
             else:
                 response["guardrailed_query"] = guardrailed_query
-        if not self.pii_enabled:
+        if bypass_guardrails or not self.pii_enabled:
             return response
         try:
             choices = response.get("choices")
@@ -343,7 +343,8 @@ class LiteLLMProxyRouter:
         with self.metrics_lock:
             self.metrics["total_requests"] += 1
 
-        if self.pii_enabled:
+        bypass_guardrails = kwargs.get("bypass_guardrails", False)
+        if self.pii_enabled and not bypass_guardrails:
             guardrail = self._get_pii_guardrail()
             from guardrails.deberta_pii_guardrail import _Config, SERVER_DEFAULT_POLICY, SERVER_OLLAMA_MODEL
             policy = self.pii_policy if self.pii_policy is not None else {k: self.pii_action for k in SERVER_DEFAULT_POLICY.keys()}
@@ -533,7 +534,7 @@ class LiteLLMProxyRouter:
                 messages=sanitized_messages
             )
             response["prompt_complexity"] = complexity
-            response = await self._sanitize_response(response, guardrailed_query)
+            response = await self._sanitize_response(response, guardrailed_query, bypass_guardrails=bypass_guardrails)
             return response
 
         # Real API Execution via LiteLLM Router - directly let LITELLM route the model!
@@ -543,7 +544,7 @@ class LiteLLMProxyRouter:
             
             # Clean kwargs
             litellm_kwargs = kwargs.copy()
-            litmm_kwargs_to_pop = ["mock_sandbox", "fallbacks"]
+            litmm_kwargs_to_pop = ["mock_sandbox", "fallbacks", "bypass_guardrails"]
             for k in litmm_kwargs_to_pop:
                 litellm_kwargs.pop(k, None)
 
@@ -573,7 +574,7 @@ class LiteLLMProxyRouter:
             except Exception:
                 pass
             
-            response = await self._sanitize_response(response, guardrailed_query)
+            response = await self._sanitize_response(response, guardrailed_query, bypass_guardrails=bypass_guardrails)
             return response
             
         except Exception as e:
@@ -612,7 +613,7 @@ class LiteLLMProxyRouter:
                         response["prompt_complexity"] = complexity
                     except Exception:
                         pass
-                    response = await self._sanitize_response(response, guardrailed_query)
+                    response = await self._sanitize_response(response, guardrailed_query, bypass_guardrails=bypass_guardrails)
                     return response
                 except Exception as intra_ex:
                     self.log_event(f"[Intra-Cluster Failover Error] Alternate backend '{alt_ep.model}' also failed: {intra_ex}.", "error")
@@ -655,7 +656,7 @@ class LiteLLMProxyRouter:
                     except Exception:
                         pass
                     
-                    response = await self._sanitize_response(response, guardrailed_query)
+                    response = await self._sanitize_response(response, guardrailed_query, bypass_guardrails=bypass_guardrails)
                     return response
                     
                 except Exception as ex:

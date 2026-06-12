@@ -20,8 +20,8 @@ class TrainingSample(BaseModel):
 
 class TrainDebertaRequest(BaseModel):
     dataset: List[TrainingSample] = Field(..., description="List of training text samples and labels")
-    epochs: Optional[int] = Field(default=3, description="Number of training epochs")
-    learning_rate: Optional[float] = Field(default=5e-5, description="Learning rate")
+    epochs: Optional[int] = Field(default=15, description="Number of training epochs")
+    learning_rate: Optional[float] = Field(default=1e-4, description="Learning rate")
     batch_size: Optional[int] = Field(default=8, description="Batch size for training")
 
 class ChatMessage(BaseModel):
@@ -35,6 +35,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = Field(default=1000, description="The maximum number of tokens to generate")
     stream: Optional[bool] = Field(default=False, description="If true, stream tokens (Note: non-streaming fully optimized in this proxy version)")
     mock_sandbox: Optional[bool] = Field(default=False, description="Force request to run in mock sandbox mode for test verification")
+    bypass_guardrails: Optional[bool] = Field(default=False, description="If true, bypass all PII guardrails for this request (e.g. for synthesis)")
 
 class UIPiiConfig(BaseModel):
     pii_enabled: bool = Field(default=False)
@@ -184,7 +185,8 @@ class LiteLLMProxyApp:
                     messages=messages_dict,
                     temperature=request.temperature,
                     max_tokens=request.max_tokens,
-                    mock_sandbox=request.mock_sandbox
+                    mock_sandbox=request.mock_sandbox,
+                    bypass_guardrails=request.bypass_guardrails
                 )
                 return response
                 
@@ -228,10 +230,13 @@ class LiteLLMProxyApp:
         @self.app.get("/ui/pii-config")
         async def get_pii_config():
             """Returns the current PII guardrail configuration."""
+            from guardrails.deberta_pii_guardrail import get_active_model_labels
+            labels = get_active_model_labels()
             return {
                 "pii_enabled": getattr(self.router, "pii_enabled", False),
                 "pii_action": getattr(self.router, "pii_action", "MASK"),
-                "pii_policy": getattr(self.router, "pii_policy", None)
+                "pii_policy": getattr(self.router, "pii_policy", None),
+                "active_labels": labels
             }
 
         @self.app.post("/ui/pii-config")

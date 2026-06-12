@@ -5,6 +5,39 @@ import time
 import re
 import yaml
 import json
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def parse_tagged_text(tagged_text: str) -> dict:
+    pattern = r'<([a-zA-Z0-9_\- ]+?)>(.*?)</\1>'
+    clean_text = ""
+    entities = []
+    last_idx = 0
+    
+    for match in re.finditer(pattern, tagged_text):
+        start_tagged, end_tagged = match.span()
+        label = match.group(1)
+        value = match.group(2)
+        
+        # Append part before match to clean text
+        clean_text += tagged_text[last_idx:start_tagged]
+        
+        # Start and end of the entity in clean text
+        entity_start = len(clean_text)
+        clean_text += value
+        entity_end = len(clean_text)
+        
+        entities.append({
+            "start": entity_start,
+            "end": entity_end,
+            "label": label.strip().lower()
+        })
+        
+        last_idx = end_tagged
+        
+    clean_text += tagged_text[last_idx:]
+    return {"text": clean_text, "entities": entities}
 
 # Set minimal, professional industry-appropriate page configuration
 st.set_page_config(
@@ -111,7 +144,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Port configuration
-PROXY_PORT = os.environ.get("PORT", "8005")
+PROXY_PORT = os.environ.get("PORT", "8000")
 PROXY_URL = f"http://127.0.0.1:{PROXY_PORT}"
 
 # Dynamically parse config.yaml models
@@ -178,6 +211,48 @@ if "last_result" not in st.session_state:
     st.session_state.last_result = None
 if "cost_limit" not in st.session_state:
     st.session_state.cost_limit = 5.00
+if "synthesis_inputs" not in st.session_state:
+    st.session_state.synthesis_inputs = [
+        {
+            "id": 0,
+            "data_format": "Medical Billing Invoice",
+            "target_label": "patient id",
+            "pattern_val": "PT-[0-9]{5}-[A-Z]{2}"
+        }
+    ]
+    st.session_state.synthesis_inputs_counter = 1
+else:
+    # Migrate any existing entries without an ID and initialize the counter
+    max_id = -1
+    for idx, item in enumerate(st.session_state.synthesis_inputs):
+        if "id" not in item:
+            item["id"] = idx
+        max_id = max(max_id, item["id"])
+    if "synthesis_inputs_counter" not in st.session_state:
+        st.session_state.synthesis_inputs_counter = max_id + 1
+if "training_dataset" not in st.session_state:
+    st.session_state.training_dataset = [
+        {
+            "text": "Hello, my name is Arthur Pendragon and my email address is arthur@camelot.org.",
+            "entities": [
+                {"start": 18, "end": 35, "label": "person"},
+                {"start": 59, "end": 77, "label": "email address"}
+            ]
+        },
+        {
+            "text": "Please charge the balance to card number 4111-2222-3333-4444.",
+            "entities": [
+                {"start": 41, "end": 60, "label": "credit card number"}
+            ]
+        },
+        {
+            "text": "My SSN is 000-12-3456 and I live at 12 Round Table Lane, London.",
+            "entities": [
+                {"start": 10, "end": 21, "label": "social security number"},
+                {"start": 36, "end": 63, "label": "address"}
+            ]
+        }
+    ]
 
 
 # ---------------------------------------------------------------------
@@ -240,15 +315,31 @@ with tab_backend:
         st.markdown("<div class='card-title'>LLM Prioritization & Limits</div>", unsafe_allow_html=True)
         st.write("Prioritize execution paths based on TPR/TPM loads. LiteLLM handles fallback routing dynamically.")
         
-        # 1. LLM priorities
-        order = st.multiselect(
-            "Priority Routing Hierarchy",
-            options=configured_models,
-            default=st.session_state.model_priorities if all(m in configured_models for m in st.session_state.model_priorities) else [configured_models[0]],
-            help="LiteLLM Gateway will route requests down this chain on congestion or failure."
-        )
-        if order:
-            st.session_state.model_priorities = order
+        # 1. LLM priorities via Drag-and-Drop sort_items
+        st.markdown("<span style='font-size:0.85rem; font-weight:600; color:#374151;'>Priority Routing Hierarchy (Drag & Drop to Order)</span>", unsafe_allow_html=True)
+        st.caption("Drag models between containers to activate/deactivate, and reorder within the 'Active Priorities' list to set priority sequence.")
+        
+        from streamlit_sortables import sort_items
+        
+        active_list = st.session_state.model_priorities
+        available_list = [m for m in configured_models if m not in active_list]
+        
+        sortable_data = [
+            {'header': 'Active Priorities (Top is highest)', 'items': active_list},
+            {'header': 'Available Models', 'items': available_list}
+        ]
+        
+        sorted_data = sort_items(sortable_data, multi_containers=True, key="model_priority_sortable")
+        
+        if sorted_data is not None:
+            new_priorities = sorted_data[0]['items']
+            # Guarantee at least one active model if user dragged everything out
+            if not new_priorities:
+                new_priorities = [configured_models[0]]
+            if new_priorities != st.session_state.model_priorities:
+                st.session_state.model_priorities = new_priorities
+                st.rerun()
+
             
         # 2. Individual Model Limits and Costs
         st.markdown("<div style='height:15px;'></div>", unsafe_allow_html=True)
@@ -315,34 +406,104 @@ with tab_backend:
         if not isinstance(pii_policy_default, dict):
             pii_policy_default = {}
             
-        PII_ENTITIES = {
+        # Base known labels with user-friendly descriptions
+        # Define the categories for standard/system labels
+        STANDARD_PII_LABELS = {
+            "person", "phone number", "social security number", "credit card number",
+            "api key", "email address", "address", "bank account number", "passport number",
+            "password", "age", "amount", "bic", "buildingnumber", "county", "currency",
+            "currencycode", "currencysymbol", "date", "dob", "eyecolor", "gender",
+            "height", "ip", "ipv4", "ipv6", "jobarea", "jobtitle", "jobtype", "mac",
+            "maskednumber", "nearbygpscoordinate", "ordinaldirection", "pin", "prefix",
+            "sex", "state", "time", "url", "useragent", "vehiclevin", "vehiclevrm"
+        }
+        
+        BASIC_KEYS = ["person", "phone number", "email address", "social security number", "credit card number"]
+        
+        FRIENDLY_NAMES = {
             "person": "Name",
             "phone number": "Phone Number",
+            "email address": "Email Address",
             "social security number": "SSN / Aadhaar",
             "credit card number": "Credit Card",
             "api key": "API Key",
-            "email address": "Email Address",
             "address": "Address",
             "bank account number": "Bank Account Number",
             "passport number": "Passport Number",
             "password": "Password"
         }
         
+        # Merge dynamically with active classes from fine-tuned model config
+        active_labels = pii_cfg.get("active_labels", list(BASIC_KEYS))
+        
+        # Determine Top Keys: basics in active_labels + custom labels
+        custom_keys = [k for k in active_labels if k not in STANDARD_PII_LABELS and k not in BASIC_KEYS]
+        top_keys = [k for k in BASIC_KEYS if k in active_labels] + custom_keys
+        
+        CATEGORIES = {
+            "Financial & Account Info": [
+                "bank account number", "api key", "password", "amount", "currency", 
+                "currencycode", "currencysymbol", "bic", "maskednumber", "pin"
+            ],
+            "Location, Address & Network": [
+                "address", "buildingnumber", "county", "state", "nearbygpscoordinate", 
+                "ip", "ipv4", "ipv6", "mac", "url"
+            ],
+            "Demographics & Personal Details": [
+                "dob", "date", "time", "age", "gender", "sex", "eyecolor", "height"
+            ],
+            "Employment & Other Metadata": [
+                "jobtitle", "jobarea", "jobtype", "employee_id", "patient_id", 
+                "prefix", "useragent", "vehiclevin", "vehiclevrm", "passport number", "ordinaldirection"
+            ]
+        }
+        
         pii_policy = {}
-        with st.expander("Configure Specific PII Types", expanded=True):
-            col_ent1, col_ent2 = st.columns(2)
-            for idx, (entity_key, entity_label) in enumerate(PII_ENTITIES.items()):
-                col = col_ent1 if idx % 2 == 0 else col_ent2
-                with col:
-                    default_action = pii_policy_default.get(entity_key, pii_action)
-                    options = ["BLOCK", "MASK", "REWRITE", "IGNORE"]
-                    selected_action = st.selectbox(
-                        entity_label,
-                        options=options,
-                        index=options.index(default_action) if default_action in options else options.index(pii_action),
-                        key=f"pii_action_{entity_key}"
-                    )
-                    pii_policy[entity_key] = selected_action
+        
+        # Helper function to render a dropdown selectbox for a specific label
+        def render_policy_select(entity_key):
+            entity_label = FRIENDLY_NAMES.get(entity_key, entity_key.replace("_", " ").title())
+            default_action = pii_policy_default.get(entity_key, pii_action)
+            options = ["BLOCK", "MASK", "REWRITE", "IGNORE"]
+            selected_action = st.selectbox(
+                entity_label,
+                options=options,
+                index=options.index(default_action) if default_action in options else options.index(pii_action),
+                key=f"pii_action_{entity_key}"
+            )
+            pii_policy[entity_key] = selected_action
+            
+        # 1. Basics & Custom Labels at the top (directly visible)
+        st.markdown("<span style='font-size:0.85rem; font-weight:600; color:#374151; display:block; margin-bottom:8px;'>Core PII & Custom Labels</span>", unsafe_allow_html=True)
+        col_ent1, col_ent2 = st.columns(2)
+        for idx, entity_key in enumerate(top_keys):
+            col = col_ent1 if idx % 2 == 0 else col_ent2
+            with col:
+                render_policy_select(entity_key)
+                
+        # 2. Categorized expanders for less common standard labels
+        for cat_name, cat_keys in CATEGORIES.items():
+            active_cat_keys = [k for k in cat_keys if k in active_labels and k not in top_keys]
+            if active_cat_keys:
+                with st.expander(f"📁 {cat_name}", expanded=False):
+                    col_cat1, col_cat2 = st.columns(2)
+                    for idx, entity_key in enumerate(active_cat_keys):
+                        col = col_cat1 if idx % 2 == 0 else col_cat2
+                        with col:
+                            render_policy_select(entity_key)
+                            
+        # Handle any uncategorized standard labels just in case
+        all_categorized = set(top_keys)
+        for cat_keys in CATEGORIES.values():
+            all_categorized.update(cat_keys)
+        misc_keys = [k for k in active_labels if k not in all_categorized]
+        if misc_keys:
+            with st.expander("📁 Other PII Entities", expanded=False):
+                col_misc1, col_misc2 = st.columns(2)
+                for idx, entity_key in enumerate(misc_keys):
+                    col = col_misc1 if idx % 2 == 0 else col_misc2
+                    with col:
+                        render_policy_select(entity_key)
                     
         st.markdown("<div style='height:15px;'></div>", unsafe_allow_html=True)
         if st.button("Apply PII Policy", type="primary", use_container_width=True):
@@ -556,7 +717,6 @@ with tab_training:
         st.rerun()
         
     elif current_status == "completed":
-        st.balloons()
         if st.button("Reset Console Status"):
             try:
                 requests.post(f"{PROXY_URL}/ui/train-deberta/reset", timeout=2.0)
@@ -575,47 +735,225 @@ with tab_training:
                 pass
                 
     else: # idle status - render configuration editor
-        st.markdown("<div class='card-title'>Configure Hyperparameters</div>", unsafe_allow_html=True)
-        col_hp1, col_hp2, col_hp3 = st.columns(3)
-        with col_hp1:
-            epochs = st.number_input("Epochs", min_value=1, max_value=20, value=3, step=1)
-        with col_hp2:
-            learning_rate = st.number_input("Learning Rate", min_value=1e-6, max_value=1e-2, value=5e-5, format="%.6f")
-        with col_hp3:
-            batch_size = st.number_input("Batch Size", min_value=1, max_value=64, value=8, step=1)
+        # 1. Synthesize Dataset Panel
+        st.markdown("<div class='card-title'>Synthesize Balanced Training Dataset (Bias Prevention)</div>", unsafe_allow_html=True)
+        st.write("Generate custom PII training data balanced dynamically to match the pre-trained model's multi-class distribution, avoiding single-label bias and catastrophic forgetting. Add multiple rows to synthesize varied data formats and labels in a single run.")
+        
+        inputs_list = st.session_state.synthesis_inputs
+        
+        for idx, item in enumerate(inputs_list):
+            item_id = item["id"]
+            st.markdown(f"<span style='font-size:0.85rem; font-weight:600; color:#4B5563; margin-top:10px; display:block;'>Custom PII Definition #{idx + 1}</span>", unsafe_allow_html=True)
+            col_df, col_tl, col_pt, col_del = st.columns([3, 3, 3, 1])
             
+            with col_df:
+                df_val = st.text_input(
+                    "Data Format / Domain Context",
+                    value=item["data_format"],
+                    key=f"df_{item_id}",
+                    help="e.g. Medical Billing Invoice, Customer Support Ticket"
+                )
+            with col_tl:
+                tl_val = st.text_input(
+                    "Target PII Label to Train",
+                    value=item["target_label"],
+                    key=f"tl_{item_id}",
+                    help="e.g. patient id, employee code"
+                )
+            with col_pt:
+                pt_val = st.text_input(
+                    "Alphanumeric Pattern / Seed (Optional)",
+                    value=item["pattern_val"],
+                    key=f"pt_{item_id}",
+                    help="e.g. PT-[0-9]{5}-[A-Z]{2}"
+                )
+            with col_del:
+                st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+                # Only allow deletion if there's more than one row
+                if len(inputs_list) > 1:
+                    if st.button("🗑️", key=f"del_{item_id}", help="Remove this definition"):
+                        st.session_state.synthesis_inputs.pop(idx)
+                        st.rerun()
+            
+            # Update values in-place directly in st.session_state
+            item["data_format"] = df_val
+            item["target_label"] = tl_val
+            item["pattern_val"] = pt_val
+        
+        col_add, _ = st.columns([1.5, 3.5])
+        with col_add:
+            if st.button("➕ Add Another Definition", type="secondary", use_container_width=True):
+                new_id = st.session_state.synthesis_inputs_counter
+                st.session_state.synthesis_inputs.append({
+                    "id": new_id,
+                    "data_format": "Customer support log",
+                    "target_label": "customer pin",
+                    "pattern_val": "PIN-[0-9]{4}"
+                })
+                st.session_state.synthesis_inputs_counter += 1
+                st.rerun()
+                
         st.markdown("<div style='height:15px;'></div>", unsafe_allow_html=True)
+        st.markdown("<span style='font-size:0.85rem; font-weight:600; color:#374151;'>Dataset Generation Settings</span>", unsafe_allow_html=True)
+        num_samples = st.number_input(
+            "Number of Training Samples to Generate",
+            min_value=10,
+            max_value=100,
+            value=30,
+            step=5,
+            help="Recommended: 30. Setting it to 30 ensures enough variety for stable DeBERTa gradient updates without creating bias or hitting API timeout limits."
+        )
+
+        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+            
+        if st.button("Synthesize Dataset", type="secondary", use_container_width=True):
+            # Validate all fields
+            valid_inputs = True
+            for idx, item in enumerate(st.session_state.synthesis_inputs):
+                if not item["data_format"].strip() or not item["target_label"].strip():
+                    st.error(f"Please provide both a Data Format and a Target PII Label for Definition #{idx + 1}.")
+                    valid_inputs = False
+                    break
+                    
+            if valid_inputs:
+                with st.spinner("Synthesizing balanced dataset via LLM proxy..."):
+                    # Construct domain and target label instructions for all definitions
+                    defs_instruction = ""
+                    allowed_labels = ["person", "email address", "phone number", "address", "credit card number", "social security number", "passport number", "bank account number", "password", "api key"]
+                    
+                    for idx, item in enumerate(st.session_state.synthesis_inputs):
+                        df = item["data_format"].strip()
+                        tl = item["target_label"].strip()
+                        pt = item["pattern_val"].strip()
+                        allowed_labels.append(tl)
+                        
+                        pt_clause = ""
+                        if pt:
+                            pt_clause = f" where values for '<{tl}>' must follow the format/pattern style of: '{pt}'"
+                        
+                        defs_instruction += (
+                            f"Definition #{idx + 1}:\n"
+                            f"- Domain Context/Data Format: '{df}'\n"
+                            f"- Target PII Label: '{tl}'{pt_clause}\n\n"
+                        )
+                    
+                    num_target = int(num_samples * 0.35)
+                    num_standard = int(num_samples * 0.35)
+                    num_neutral = num_samples - (2 * num_target)
+                    
+                    system_prompt = "You are a specialized data synthesizer for PII NER models. You only return valid raw JSON arrays of strings."
+                    prompt = (
+                        f"You must generate a training dataset of exactly {num_samples} diverse and realistic text samples.\n"
+                        f"The text samples must be generated based on the following custom PII and domain definitions:\n\n"
+                        f"{defs_instruction}"
+                        f"IMPORTANT: Each generated sample must strictly match and be formatted in the layout and style of the corresponding user-requested Data Format / Domain Context (e.g. if the format is 'Medical Billing Invoice', write the sample text exactly like a medical invoice). If multiple definitions are provided, distribute the {num_samples} samples evenly across the specified Data Formats.\n\n"
+                        f"To match the pre-trained DeBERTa model's distribution and prevent overfitting or label bias, you MUST balance the instances across the {num_samples} generated texts as follows:\n"
+                        f"1. Exactly {num_target} of the samples must contain at least one of the custom target PII labels (using the actual user-defined target label names as the tag names, for example, if the target label is 'patient id', write: '<patient id>value</patient id>'), often alongside other standard PII categories (e.g. '<person>Arthur</person>', '<email address>test@email.com</email address>') to simulate realistic co-occurrence.\n"
+                        f"2. Exactly {num_standard} of the samples must contain ONLY standard pre-trained PII categories (like '<person>Arthur</person>', '<email address>test@email.com</email address>', '<phone number>+12345678</phone number>') and NOT contain any of the custom target labels.\n"
+                        f"3. Exactly {num_neutral} of the samples must be neutral texts containing NO PII entities at all.\n\n"
+                        f"Use XML-like tags to annotate entities directly in the text using the exact label name as the XML tag (e.g., '<person>name</person>' or '<patient id>value</patient id>'). Never use the literal word 'label' as a tag name.\n"
+                        f"Use ONLY the following labels for annotation: {', '.join(sorted(set(allowed_labels)))}.\n\n"
+                        f"Return the response ONLY as a valid JSON list of strings (no markdown tags, no formatting, just the raw JSON list of strings)."
+                    )
+                    
+                    # Dynamically adjust max_tokens based on number of samples (roughly 100 tokens per sample)
+                    max_tokens_val = min(4000, max(1000, num_samples * 100))
+                    
+                    payload = {
+                        "model": st.session_state.model_priorities[0] if st.session_state.model_priorities else "groq/llama-3.1-8b-instant",
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "temperature": 0.5,
+                        "max_tokens": max_tokens_val,
+                        "bypass_guardrails": True
+                    }
+                    
+                    try:
+                        r = requests.post(f"{PROXY_URL}/v1/chat/completions", json=payload, timeout=45.0)
+                        if r.status_code == 200:
+                            resp_json = r.json()
+                            content = resp_json["choices"][0]["message"]["content"].strip()
+                            
+                            # Clean markdown formatting if LLM included it
+                            if content.startswith("```"):
+                                content = re.sub(r"^```(?:json)?\n?", "", content)
+                                content = re.sub(r"\n?```$", "", content)
+                            content = content.strip()
+                            
+                            try:
+                                tagged_texts = json.loads(content)
+                                if not isinstance(tagged_texts, list):
+                                    st.error("Generated response was not a JSON list of strings. Raw output:\n" + content)
+                                else:
+                                    parsed_dataset = []
+                                    for t in tagged_texts[:num_samples]:
+                                        parsed_sample = parse_tagged_text(t)
+                                        parsed_dataset.append(parsed_sample)
+                                    
+                                    st.session_state.training_dataset = parsed_dataset
+                                    st.success(f"Synthesized {len(parsed_dataset)} balanced dataset samples successfully!")
+                                    st.rerun()
+                            except Exception as pe:
+                                st.error(f"Failed to parse generated JSON: {pe}. Raw output:\n{content}")
+                        else:
+                            st.error(f"LLM synthesis failed: {r.status_code} - {r.text}")
+                    except Exception as e:
+                        st.error(f"Could not connect to LiteLLM Proxy: {e}")
+
+        st.markdown("<hr style='margin:20px 0; border:0; border-top:1px solid #E5E7EB;'>", unsafe_allow_html=True)
+
+        # Hidden training hyperparameters (pre-configured to optimal defaults for DeBERTa SFT)
+        epochs = 15
+        learning_rate = 1e-4
+        batch_size = 8
+
+        # 3. Input Training Dataset
         st.markdown("<div class='card-title'>Input Training Dataset (JSON Format)</div>", unsafe_allow_html=True)
         st.write("Define text training samples and label offsets for NER Token Classification. Matches canonical labels.")
         
-        default_dataset = [
-            {
-                "text": "Hello, my name is Arthur Pendragon and my email address is arthur@camelot.org.",
-                "entities": [
-                    {"start": 18, "end": 35, "label": "person"},
-                    {"start": 59, "end": 77, "label": "email address"}
-                ]
-            },
-            {
-                "text": "Please charge the balance to card number 4111-2222-3333-4444.",
-                "entities": [
-                    {"start": 41, "end": 60, "label": "credit card number"}
-                ]
-            },
-            {
-                "text": "My SSN is 000-12-3456 and I live at 12 Round Table Lane, London.",
-                "entities": [
-                    {"start": 10, "end": 21, "label": "social security number"},
-                    {"start": 36, "end": 63, "label": "address"}
-                ]
-            }
-        ]
-        
         dataset_json = st.text_area(
             "Training Dataset JSON",
-            value=json.dumps(default_dataset, indent=2),
+            value=json.dumps(st.session_state.training_dataset, indent=2),
             height=300
         )
+
+        # 4. Bias Prevention Checklist & Analytics
+        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+        try:
+            active_dataset = json.loads(dataset_json)
+            if isinstance(active_dataset, list):
+                total_samples = len(active_dataset)
+                if total_samples > 0:
+                    label_occurrences = {}
+                    neutral_count = 0
+                    
+                    for sample in active_dataset:
+                        ents = sample.get("entities", [])
+                        if not ents:
+                            neutral_count += 1
+                        for ent in ents:
+                            lbl = ent.get("label", "unknown").lower()
+                            label_occurrences[lbl] = label_occurrences.get(lbl, 0) + 1
+                    
+                    st.markdown("<div class='card' style='background-color:#F9FAFB; padding:12px; border-radius:6px;'>", unsafe_allow_html=True)
+                    st.markdown("<span style='font-size:0.85rem; font-weight:600; color:#374151;'>Active Dataset Balance & Bias Check</span>", unsafe_allow_html=True)
+                    col_b1, col_b2 = st.columns([1, 2])
+                    with col_b1:
+                        st.write(f"**Total Samples**: {total_samples}")
+                        st.write(f"**Neutral Samples (no PII)**: {neutral_count} ({neutral_count/total_samples*100:.1f}%)")
+                    with col_b2:
+                        if label_occurrences:
+                            breakdown_items = [f"**{lbl}**: {count} ({count/total_samples*100:.1f}% of samples)" for lbl, count in label_occurrences.items()]
+                            st.write("**Entity Instances Frequency**:")
+                            for item in breakdown_items:
+                                st.write(f"• {item}")
+                        else:
+                            st.write("• No PII entities annotated yet.")
+                    st.markdown("</div>", unsafe_allow_html=True)
+        except Exception:
+            pass
         
         if st.button("Start Fine-Tuning", type="primary", use_container_width=True):
             try:

@@ -76,7 +76,11 @@ def _get_masked_and_adjusted(text: str, mask_ents: list, rewrite_ents: list) -> 
 
 
 def canonicalize_label(model_label: str) -> str:
-    l = model_label.upper().replace("_", "").replace(" ", "")
+    clean_lbl = model_label
+    if model_label.startswith("B-") or model_label.startswith("I-"):
+        clean_lbl = model_label[2:]
+        
+    l = clean_lbl.upper().replace("_", "").replace(" ", "")
     if "FIRSTNAME" in l or "LASTNAME" in l or "SURNAME" in l or "NAME" in l or "PER" in l:
         return "person"
     if "EMAIL" in l:
@@ -97,7 +101,7 @@ def canonicalize_label(model_label: str) -> str:
         return "password"
     if "KEY" in l or "SECRET" in l:
         return "api key"
-    return model_label.lower()
+    return clean_lbl.lower()
 
 
 active_guardrails = []
@@ -377,6 +381,35 @@ class DeBERTaRegisterCallback(CustomLogger):
 
 deberta_register_callback = DeBERTaRegisterCallback()
 
+def get_active_model_labels() -> List[str]:
+    import os
+    import json
+    
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.abspath(os.path.join(current_dir, "..", "models", "finetuned-deberta"))
+    config_file = os.path.join(model_path, "config.json")
+    
+    default_labels = [
+        "person", "phone number", "social security number", "credit card number",
+        "api key", "email address", "address", "bank account number", "passport number", "password"
+    ]
+    
+    if not os.path.exists(config_file):
+        return default_labels
+        
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+            id2label = cfg.get("id2label", {})
+            
+        labels = set()
+        for lbl in id2label.values():
+            if lbl != "O":
+                canonical = canonicalize_label(lbl)
+                labels.add(canonical)
+        return sorted(list(labels))
+    except Exception:
+        return default_labels
 
 def get_model_label_ids(id2label: dict, canonicalize_fn, entity_label: str) -> Tuple[Optional[int], Optional[int]]:
     entity_label_clean = entity_label.upper().replace("_", "").replace(" ", "")
@@ -451,7 +484,56 @@ def train_deberta_model(
     model = AutoModelForTokenClassification.from_pretrained(model_name_or_path)
     
     id2label = model.config.id2label
+    label2id = {v: k for k, v in id2label.items()}
     
+    # Identify unique custom labels from training dataset
+    dataset_labels = set()
+    for item in dataset:
+        for ent in item.get("entities", []):
+            dataset_labels.add(ent.get("label", "").strip().lower())
+            
+    # Check if any label is missing B- or I- tags in id2label
+    missing_labels = []
+    for dl in dataset_labels:
+        b_id, i_id = get_model_label_ids(id2label, canonicalize_label, dl)
+        if b_id is None or i_id is None:
+            suffix = dl.upper().replace(" ", "_")
+            if f"B-{suffix}" not in label2id:
+                missing_labels.append(f"B-{suffix}")
+            if f"I-{suffix}" not in label2id:
+                missing_labels.append(f"I-{suffix}")
+                
+    if missing_labels:
+        verbose_proxy_logger.info(f"[DeBERTa Training] Expanding classifier head to support new labels: {missing_labels}")
+        import torch.nn as nn
+        
+        old_num_labels = len(id2label)
+        new_num_labels = old_num_labels + len(missing_labels)
+        
+        for idx, new_lbl in enumerate(missing_labels):
+            new_id = old_num_labels + idx
+            id2label[new_id] = new_lbl
+            label2id[new_lbl] = new_id
+            
+        model.config.id2label = id2label
+        model.config.label2id = label2id
+        model.config.num_labels = new_num_labels
+        
+        # Expand classifier weights
+        old_classifier = model.classifier
+        new_classifier = nn.Linear(old_classifier.in_features, new_num_labels)
+        
+        # Copy original weights
+        new_classifier.weight.data[:old_num_labels] = old_classifier.weight.data
+        new_classifier.bias.data[:old_num_labels] = old_classifier.bias.data
+        
+        # Initialize new labels weights
+        nn.init.normal_(new_classifier.weight.data[old_num_labels:], std=0.02)
+        nn.init.zeros_(new_classifier.bias.data[old_num_labels:])
+        
+        model.classifier = new_classifier
+        model.num_labels = new_num_labels
+        
     tokenized_inputs = []
     
     for item in dataset:
@@ -500,6 +582,22 @@ def train_deberta_model(
         encodings.pop("offset_mapping")
         tokenized_inputs.append(encodings)
         
+    class WeightedTrainer(Trainer):
+        def __init__(self, class_weights, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.class_weights = torch.tensor(class_weights, dtype=torch.float32)
+            
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            labels = inputs.get("labels")
+            outputs = model(**inputs)
+            logits = outputs.get("logits")
+            
+            self.class_weights = self.class_weights.to(logits.device)
+            loss_fct = torch.nn.CrossEntropyLoss(weight=self.class_weights, ignore_index=-100)
+            loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
+            
+            return (loss, outputs) if return_outputs else loss
+
     class NERDataset(torch.utils.data.Dataset):
         def __init__(self, encodings):
             self.encodings = encodings
@@ -511,6 +609,29 @@ def train_deberta_model(
             return len(self.encodings)
             
     train_dataset = NERDataset(tokenized_inputs)
+    
+    # Calculate token frequencies and class weights to mitigate background 'O' class bias
+    label_counts = {}
+    total_tokens = 0
+    for item in tokenized_inputs:
+        for lbl in item["labels"]:
+            if lbl != -100:
+                label_counts[lbl] = label_counts.get(lbl, 0) + 1
+                total_tokens += 1
+                
+    num_classes = len(id2label)
+    weights = [1.0] * num_classes
+    
+    for lbl_id, count in label_counts.items():
+        if count > 0:
+            weights[lbl_id] = total_tokens / (num_classes * count)
+            
+    if weights[0] > 0:
+        norm_factor = weights[0]
+        weights = [w / norm_factor for w in weights]
+        
+    weights = [min(w, 10.0) for w in weights]
+    verbose_proxy_logger.info(f"[DeBERTa Training] Custom class training weights calculated: {weights}")
     
     training_args = TrainingArguments(
         output_dir=output_dir,
@@ -539,7 +660,7 @@ def train_deberta_model(
     else:
         trainer_kwargs["tokenizer"] = tokenizer
         
-    trainer = Trainer(**trainer_kwargs)
+    trainer = WeightedTrainer(class_weights=weights, **trainer_kwargs)
     
     verbose_proxy_logger.info("[DeBERTa Training] Starting training arguments loop...")
     trainer.train()
