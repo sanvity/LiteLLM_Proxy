@@ -5,6 +5,10 @@ import time
 import yaml
 import asyncio
 import sys
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Ensure parent path is in sys.path for standalone imports
 file_dir = os.path.dirname(os.path.abspath(__file__))
