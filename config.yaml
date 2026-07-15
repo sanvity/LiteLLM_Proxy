@@ -58,15 +58,15 @@ model_list:
       cost_per_million: 0.90
       complexity_tier: high
 
-  # 3. Local Ollama Llama 3.1 (Local backup failover - zero cost)
+  # 3. Groq Llama 3.1 8B (Fallback/backup node - fast and low cost)
   - model_name: backup-cluster
     litellm_params:
-      model: ollama/llama3.1
-      api_base: os.environ/OLLAMA_API_BASE
-      rpm: 10000
-      tpm: 1000000
+      model: groq/llama-3.1-8b-instant
+      api_key: os.environ/GROQ_API_KEY
+      rpm: 1000
+      tpm: 100000
       tpr: 131072
-      cost_per_million: 0.00
+      cost_per_million: 0.05
       complexity_tier: low
 
 # General Router Settings

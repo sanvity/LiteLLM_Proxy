@@ -1,0 +1,8 @@
+{
+  "pii_enabled": false,
+  "pii_action": "MASK",
+  "pii_policy": null,
+  "custom_labels": [
+    "membership card"
+  ]
+}

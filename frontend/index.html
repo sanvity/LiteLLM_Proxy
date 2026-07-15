@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     
     <style>
         :root {
@@ -56,7 +57,7 @@
         .nav-container {
             max-width: 1400px;
             margin: 0 auto;
-            padding: 1rem 2rem;
+            padding: 0.5rem 1.25rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -64,16 +65,17 @@
 
         .brand h1 {
             font-family: 'Space Grotesk', sans-serif;
-            font-size: 1.3rem;
+            font-size: 1.2rem;
             font-weight: 700;
             letter-spacing: -0.02em;
             background: linear-gradient(to right, var(--glow-cyan), #a78bfa);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
         .brand span {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: var(--text-muted);
             font-weight: 500;
             display: block;
@@ -82,22 +84,22 @@
         .status {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.4rem;
             background: rgba(16, 185, 129, 0.06);
             border: 1px solid rgba(16, 185, 129, 0.15);
-            padding: 0.35rem 0.85rem;
+            padding: 0.25rem 0.65rem;
             border-radius: 50px;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 600;
             color: var(--glow-green);
         }
 
         .status-dot {
-            width: 8px;
-            height: 8px;
+            width: 6px;
+            height: 6px;
             background: var(--glow-green);
             border-radius: 50%;
-            box-shadow: 0 0 8px var(--glow-green);
+            box-shadow: 0 0 6px var(--glow-green);
         }
 
         main {
@@ -105,10 +107,10 @@
             max-width: 1400px;
             width: 100%;
             margin: 0 auto;
-            padding: 2rem;
+            padding: 1rem 1.25rem;
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 2rem;
+            gap: 1rem;
         }
 
         @media (max-width: 1024px) {
@@ -120,45 +122,45 @@
         .card {
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 16px;
-            padding: 1.5rem;
+            border-radius: 12px;
+            padding: 1rem;
             backdrop-filter: blur(16px);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
             display: flex;
             flex-direction: column;
-            gap: 1.25rem;
+            gap: 0.75rem;
         }
 
         .title {
             font-family: 'Space Grotesk', sans-serif;
-            font-size: 1.15rem;
+            font-size: 1.1rem;
             font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.4rem;
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            padding-bottom: 0.75rem;
+            padding-bottom: 0.5rem;
         }
 
         /* Chat Window styling */
         .chat-container {
             border: 1px solid var(--border-color);
             background: rgba(3, 5, 8, 0.5);
-            border-radius: 12px;
+            border-radius: 10px;
             height: 350px;
             overflow-y: auto;
-            padding: 1rem;
+            padding: 0.75rem;
             display: flex;
             flex-direction: column;
-            gap: 1rem;
+            gap: 0.5rem;
         }
 
         .bubble {
             max-width: 85%;
-            padding: 0.75rem 1rem;
-            border-radius: 12px;
-            font-size: 0.9rem;
-            line-height: 1.5;
+            padding: 0.5rem 0.75rem;
+            border-radius: 10px;
+            font-size: 0.85rem;
+            line-height: 1.4;
             white-space: pre-wrap;
             animation: slideUp 0.2s ease-out;
         }
@@ -205,7 +207,7 @@
         .settings-row {
             display: grid;
             grid-template-columns: 2fr 1fr 1fr;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         @media (max-width: 640px) {
@@ -217,11 +219,11 @@
         .form-item {
             display: flex;
             flex-direction: column;
-            gap: 0.4rem;
+            gap: 0.25rem;
         }
 
         label {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 600;
             color: var(--text-muted);
             text-transform: uppercase;
@@ -232,10 +234,10 @@
             background: rgba(3, 5, 8, 0.6);
             border: 1px solid var(--border-color);
             color: var(--text-main);
-            padding: 0.6rem 0.8rem;
-            border-radius: 8px;
+            padding: 0.45rem 0.6rem;
+            border-radius: 6px;
             font-family: inherit;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             outline: none;
             width: 100%;
             transition: border-color 0.2s, box-shadow 0.2s;
@@ -243,23 +245,23 @@
 
         select:focus, input:focus, textarea:focus {
             border-color: var(--glow-cyan);
-            box-shadow: 0 0 8px rgba(6, 182, 212, 0.2);
+            box-shadow: 0 0 6px rgba(6, 182, 212, 0.2);
         }
 
         textarea {
-            height: 70px;
+            height: 60px;
             resize: none;
         }
 
         .checkbox-label {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
-            font-size: 0.85rem;
+            gap: 0.4rem;
+            font-size: 0.8rem;
             cursor: pointer;
             user-select: none;
             height: 100%;
-            padding-top: 1.25rem;
+            padding-top: 1.15rem;
         }
 
         .checkbox-label input {
@@ -272,15 +274,15 @@
             color: white;
             font-weight: 600;
             border: none;
-            padding: 0.75rem;
-            border-radius: 8px;
+            padding: 0.55rem 0.75rem;
+            border-radius: 6px;
             cursor: pointer;
             transition: transform 0.2s, filter 0.2s;
-            font-size: 0.95rem;
+            font-size: 0.9rem;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 0.5rem;
+            gap: 0.4rem;
         }
 
         button:hover {
@@ -320,54 +322,81 @@
             gap: 1rem;
         }
 
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+        }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        @media (max-width: 1024px) {
+            .grid-4 {
+                grid-template-columns: 1fr 1fr;
+            }
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .grid-4 {
+                grid-template-columns: 1fr;
+            }
+        }
+
         .stat-card {
             background: rgba(255, 255, 255, 0.015);
             border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 0.85rem;
+            border-radius: 8px;
+            padding: 0.5rem;
         }
 
         .stat-title {
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             font-weight: 600;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.15rem;
         }
 
         .stat-value {
             font-family: 'Space Grotesk', sans-serif;
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 700;
             color: var(--text-main);
         }
 
         .stat-meta {
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             color: var(--text-muted);
-            margin-top: 0.15rem;
+            margin-top: 0.1rem;
         }
 
         /* scrolling logs */
         .logs-box {
             background: rgba(3, 5, 8, 0.75);
             border: 1px solid var(--border-color);
-            border-radius: 10px;
-            padding: 0.75rem;
+            border-radius: 8px;
+            padding: 0.5rem;
             font-family: monospace;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             height: 160px;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 0.35rem;
+            gap: 0.2rem;
         }
 
         .log-line {
             display: flex;
-            gap: 0.5rem;
-            line-height: 1.4;
+            gap: 0.4rem;
+            line-height: 1.3;
         }
 
         .log-time {
@@ -384,7 +413,7 @@
         .providers-container {
             display: flex;
             flex-direction: column;
-            gap: 0.5rem;
+            gap: 0.3rem;
             max-height: 180px;
             overflow-y: auto;
             padding-right: 0.25rem;
@@ -393,29 +422,114 @@
         .provider-row {
             background: rgba(255, 255, 255, 0.01);
             border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            padding: 0.35rem 0.5rem;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
         }
 
         .provider-meta {
             color: var(--text-muted);
-            font-size: 0.7rem;
+            font-size: 0.65rem;
         }
 
         .badge {
-            font-size: 0.65rem;
+            font-size: 0.6rem;
             font-weight: 600;
-            padding: 0.15rem 0.4rem;
-            border-radius: 4px;
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .badge.cyan { background: rgba(6, 182, 212, 0.06); color: var(--glow-cyan); border-color: rgba(6, 182, 212, 0.15); }
         .badge.purple { background: rgba(139, 92, 246, 0.06); color: var(--glow-violet); border-color: rgba(139, 92, 246, 0.15); }
+        
+        /* Evaluation page styles */
+        .badge.green { background: rgba(16, 185, 129, 0.06); color: var(--glow-green); border-color: rgba(16, 185, 129, 0.15); }
+        .badge.red { background: rgba(244, 63, 94, 0.06); color: var(--glow-rose); border-color: rgba(244, 63, 94, 0.15); }
+        .badge.amber { background: rgba(245, 158, 11, 0.06); color: var(--glow-amber); border-color: rgba(245, 158, 11, 0.15); }
+        
+        .timestamp-badge {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            padding: 0.3rem 0.6rem;
+            border-radius: 4px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+        
+        .manual-step {
+            background: rgba(245, 158, 11, 0.04);
+            border: 1px solid rgba(245, 158, 11, 0.15);
+            border-radius: 6px;
+            padding: 0.4rem 0.6rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+        
+        .manual-step strong {
+            color: var(--glow-amber);
+        }
+        
+        .collapsible-header {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.35rem 0;
+            font-weight: 600;
+            color: var(--text-main);
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .collapsible-header:hover {
+            color: var(--glow-cyan);
+        }
+        
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        
+        .collapsible-content.open {
+            max-height: 1000px;
+        }
+        
+        .metrics-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+        
+        .metrics-table th {
+            background: rgba(255, 255, 255, 0.03);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.4rem 0.5rem;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-muted);
+            cursor: pointer;
+        }
+        
+        .metrics-table th:hover {
+            color: var(--glow-cyan);
+        }
+        
+        .metrics-table td {
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.4rem 0.5rem;
+        }
+        
+        .metrics-table tr:hover {
+            background: rgba(255, 255, 255, 0.01);
+        }
         
         /* Tabs System */
         .tab-btn {
@@ -424,8 +538,8 @@
             border: none;
             border-bottom: 2px solid transparent;
             border-radius: 0;
-            padding: 0.5rem 1rem;
-            font-size: 0.95rem;
+            padding: 0.35rem 0.75rem;
+            font-size: 0.9rem;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.3s ease;
@@ -433,7 +547,7 @@
             transform: none;
             display: flex;
             align-items: center;
-            gap: 0.35rem;
+            gap: 0.3rem;
         }
         .tab-btn:hover {
             color: var(--text-main);
@@ -462,11 +576,15 @@
         </div>
     </header>
 
-    <div class="tabs-header-container" style="max-width: 1400px; margin: 1rem auto 0 auto; padding: 0 2rem;">
+    <div class="tabs-header-container" style="max-width: 1400px; margin: 0.5rem auto 0 auto; padding: 0 1.25rem;">
         <div style="display: flex; gap: 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.25rem;">
             <button id="tab-gateway" class="tab-btn active" onclick="switchTab('gateway')">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
                 Gateway Routing
+            </button>
+            <button id="tab-evaluation" class="tab-btn" onclick="switchTab('evaluation')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                Guardrail Evaluation
             </button>
         </div>
     </div>
@@ -610,6 +728,119 @@
         </div>
     </main>
 
+    <main id="content-evaluation" style="display: none; max-width: 1400px; margin: 0 auto; padding: 1rem 1.25rem;">
+        <div class="card">
+            <div class="title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                PII Guardrail Evaluation Report
+            </div>
+            
+            <div class="manual-step">
+                <strong>⚠️ Manual Update Required:</strong> This report shows cached evaluation results. To update after retraining, run <code>python3 evaluate.py</code> in the project root.
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                <div class="timestamp-badge" id="eval-timestamp">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    <span id="timestamp-text">Loading...</span>
+                </div>
+            </div>
+            
+            <div id="eval-loading" style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                <div class="spinner" style="display: inline-block; margin: 0 auto;"></div>
+                <div style="margin-top: 1rem;">Loading evaluation data...</div>
+            </div>
+            
+            <div id="eval-content" style="display: none;">
+                <!-- Overall Performance Cards -->
+                <div class="grid-4" style="margin-bottom: 0.75rem;">
+                    <div class="stat-card">
+                        <div class="stat-title">Base Model Macro F1</div>
+                        <div class="stat-value" id="base-macro-f1">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-title">Fine-tuned Macro F1</div>
+                        <div class="stat-value" id="ft-macro-f1" style="color: var(--glow-green);">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-title">F1 Improvement</div>
+                        <div class="stat-value" id="improvement">--</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-title">Classification Accuracy</div>
+                        <div class="stat-value" id="ft-accuracy" style="color: var(--glow-cyan);">--</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+                            Base: <span id="base-accuracy">--</span> (<span id="accuracy-improvement">--</span>)
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Charts Grid -->
+                <div class="charts-grid" style="margin-bottom: 0.75rem;">
+                    <div>
+                        <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-main);">F1 Score Comparison by Entity Type</h3>
+                        <div id="f1-chart" style="height: 400px; background: rgba(3, 5, 8, 0.3); border-radius: 8px; border: 1px solid var(--border-color); padding: 0.5rem;"></div>
+                    </div>
+                    <div>
+                        <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-main);">Confusion Matrix (Fine-tuned Model)</h3>
+                        <div id="confusion-chart" style="height: 400px; background: rgba(3, 5, 8, 0.3); border-radius: 8px; border: 1px solid var(--border-color); padding: 0.5rem;"></div>
+                    </div>
+                </div>
+                
+                <!-- Metrics Table -->
+                <div style="margin-bottom: 0.75rem;">
+                    <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-main);">Detailed Metrics (click headers to sort)</h3>
+                    <div style="overflow-x: auto;">
+                        <table class="metrics-table" id="metrics-table">
+                            <thead>
+                                <tr>
+                                    <th onclick="sortTable(0)">Entity Type</th>
+                                    <th onclick="sortTable(1)">Model</th>
+                                    <th onclick="sortTable(2)">Precision</th>
+                                    <th onclick="sortTable(3)">Recall</th>
+                                    <th onclick="sortTable(4)">F1</th>
+                                    <th onclick="sortTable(5)">Delta</th>
+                                </tr>
+                            </thead>
+                            <tbody id="metrics-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Error Examples -->
+                <div style="margin-bottom: 0.75rem;">
+                    <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 0.4rem; color: var(--text-main);">Error Analysis</h3>
+                    
+                    <div class="card" style="background: rgba(3, 5, 8, 0.3);">
+                        <div class="collapsible-header" onclick="toggleCollapsible('fixed-misses')">
+                            <span>✅ Cases Where Fine-tuning Fixed Misses</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </div>
+                        <div class="collapsible-content" id="fixed-misses">
+                            <div id="fixed-misses-content" style="padding: 1rem 0;"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="card" style="background: rgba(3, 5, 8, 0.3);">
+                        <div class="collapsible-header" onclick="toggleCollapsible('new-false-positives')">
+                            <span>❌ Cases Where Fine-tuning Introduced False Positives</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </div>
+                        <div class="collapsible-content" id="new-false-positives">
+                            <div id="new-false-positives-content" style="padding: 1rem 0;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="eval-error" style="display: none; text-align: center; padding: 2rem; color: var(--glow-rose);">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 1rem;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                <div>Failed to load evaluation data. Make sure to run <code>python3 evaluate.py</code> first.</div>
+            </div>
+        </div>
+    </main>
+
     <script>
         let isWaiting = false;
 
@@ -732,15 +963,427 @@
         // Tabs switcher helper
         function switchTab(tab) {
             const gatewayTab = document.getElementById('tab-gateway');
-            const guardrailsTab = document.getElementById('tab-guardrails');
+            const evaluationTab = document.getElementById('tab-evaluation');
             const gatewayContent = document.getElementById('content-gateway');
-            const guardrailsContent = document.getElementById('content-guardrails');
+            const evaluationContent = document.getElementById('content-evaluation');
             
+            if (tab === 'gateway') {
+                gatewayTab.classList.add('active');
+                evaluationTab.classList.remove('active');
                 gatewayContent.style.display = 'grid';
+                evaluationContent.style.display = 'none';
+            } else if (tab === 'evaluation') {
+                evaluationTab.classList.add('active');
+                gatewayTab.classList.remove('active');
+                evaluationContent.style.display = 'block';
+                gatewayContent.style.display = 'none';
+                loadEvaluationData();
             }
         }
 
 
+
+        // Run initial metrics query and poll
+        updateMetrics();
+        setInterval(updateMetrics, 5000);
+
+        // Core Query Submission handler
+        async function sendQuery() {
+            const promptInput = document.getElementById('prompt-input');
+            const promptText = promptInput.value.trim();
+            if (!promptText || isWaiting) return;
+
+            isWaiting = true;
+            
+            // Buttons and elements
+            const btn = document.getElementById('btn-submit');
+            const spinner = document.getElementById('btn-spinner');
+            const label = document.getElementById('btn-label');
+            const box = document.getElementById('chat-box');
+            const placeholder = document.getElementById('chat-placeholder');
+            
+            btn.disabled = true;
+            spinner.style.display = 'block';
+            label.innerText = 'Routing and resolving request...';
+            
+            if (placeholder) placeholder.remove();
+
+            // Render Prompt bubble
+            const promptBubble = document.createElement('div');
+            promptBubble.className = 'bubble user';
+            promptBubble.innerText = promptText;
+            box.appendChild(promptBubble);
+            box.scrollTop = box.scrollHeight;
+            
+            promptInput.value = ''; // clear textarea
+
+            const modelId = document.getElementById('model-select').value;
+            const tempVal = parseFloat(document.getElementById('temp-input').value) || 0.7;
+            const useMock = document.getElementById('mock-toggle').checked;
+
+            printLog(`[Routing] Analyzing TPR compatibility for new query on target: ${modelId}...`, 'routing');
+
+            const payload = {
+                model: modelId,
+                messages: [{ role: "user", content: promptText }],
+                temperature: tempVal,
+                mock_sandbox: useMock
+            };
+
+            const t0 = performance.now();
+
+            try {
+                const res = await fetch('/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const t1 = performance.now();
+                const latency = ((t1 - t0) / 1000).toFixed(2);
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || "Server routing error.");
+                }
+
+                const data = await res.json();
+                const reply = (data.choices && data.choices[0] && data.choices[0].message) 
+                    ? data.choices[0].message.content 
+                    : (data.detail || JSON.stringify(data));
+                const actualModelName = data.model || modelId || "unknown";
+                const providerName = (actualModelName && actualModelName.indexOf('/') !== -1) 
+                    ? actualModelName.split('/')[0].toUpperCase() 
+                    : "PROXY";
+                const usage = data.usage || {};
+
+                // Render assistant bubble
+                const assistBubble = document.createElement('div');
+                assistBubble.className = 'bubble assistant';
+                assistBubble.innerText = reply;
+                box.appendChild(assistBubble);
+                box.scrollTop = box.scrollHeight;
+
+                // Render parameters
+                document.getElementById('eval-response').innerText = reply;
+                document.getElementById('eval-model').innerText = `${providerName} → ${actualModelName}`;
+                document.getElementById('eval-provider').innerText = `Provider: ${providerName}`;
+                document.getElementById('eval-latency').innerText = `${latency}s`;
+                
+                const promptTokens = usage.prompt_tokens || 0;
+                const totalTokens = usage.total_tokens || 0;
+                
+                document.getElementById('eval-tpr').innerText = `${promptTokens} Tokens`;
+                
+                const speed = (totalTokens / parseFloat(latency)).toFixed(1);
+                document.getElementById('eval-speed').innerText = `${speed} Tokens/s`;
+                
+                const complexity = data.prompt_complexity || "LOW";
+                const complexityEl = document.getElementById('eval-complexity');
+                if (complexityEl) {
+                    complexityEl.innerText = complexity.toUpperCase();
+                    if (complexity.toLowerCase() === 'high') {
+                        complexityEl.style.color = 'var(--glow-rose)';
+                    } else if (complexity.toLowerCase() === 'medium') {
+                        complexityEl.style.color = 'var(--glow-amber)';
+                    } else {
+                        complexityEl.style.color = 'var(--glow-green)';
+                    }
+                }
+
+        // Evaluation data loading
+        let evaluationData = null;
+        let currentSort = { column: -1, ascending: true };
+
+        async function loadEvaluationData() {
+            const loading = document.getElementById('eval-loading');
+            const content = document.getElementById('eval-content');
+            const error = document.getElementById('eval-error');
+            
+            loading.style.display = 'block';
+            content.style.display = 'none';
+            error.style.display = 'none';
+            
+            try {
+                const res = await fetch('/api/evaluation');
+                if (!res.ok) throw new Error('Failed to fetch evaluation data');
+                
+                evaluationData = await res.json();
+                
+                // Update timestamp
+                const timestamp = new Date(evaluationData.timestamp);
+                document.getElementById('timestamp-text').innerText = `Last evaluated: ${timestamp.toLocaleString()}`;
+                
+                // Update performance cards
+                document.getElementById('base-macro-f1').innerText = evaluationData.base_metrics.macro.f1.toFixed(3);
+                document.getElementById('ft-macro-f1').innerText = evaluationData.finetuned_metrics.macro.f1.toFixed(3);
+                
+                const improvement = evaluationData.finetuned_metrics.macro.f1 - evaluationData.base_metrics.macro.f1;
+                const improvementEl = document.getElementById('improvement');
+                improvementEl.innerText = (improvement >= 0 ? '+' : '') + improvement.toFixed(3);
+                improvementEl.style.color = improvement >= 0 ? 'var(--glow-green)' : 'var(--glow-rose)';
+
+                // Accuracy metrics
+                const baseAcc = evaluationData.base_metrics.accuracy || 0.0;
+                const ftAcc = evaluationData.finetuned_metrics.accuracy || 0.0;
+                const accImprovement = ftAcc - baseAcc;
+                
+                document.getElementById('base-accuracy').innerText = (baseAcc * 100).toFixed(2) + '%';
+                document.getElementById('ft-accuracy').innerText = (ftAcc * 100).toFixed(2) + '%';
+                
+                const accImpEl = document.getElementById('accuracy-improvement');
+                accImpEl.innerText = (accImprovement >= 0 ? '+' : '') + (accImprovement * 100).toFixed(2) + '%';
+                accImpEl.style.color = accImprovement >= 0 ? 'var(--glow-green)' : 'var(--glow-rose)';
+                
+                // Render charts
+                renderF1Chart(evaluationData);
+                renderConfusionMatrix(evaluationData);
+                
+                // Render metrics table
+                renderMetricsTable(evaluationData);
+                
+                // Render error examples
+                renderErrorExamples(evaluationData);
+                
+                loading.style.display = 'none';
+                content.style.display = 'block';
+                
+            } catch (err) {
+                console.error('Failed to load evaluation data:', err);
+                loading.style.display = 'none';
+                error.style.display = 'block';
+            }
+        }
+
+        function renderF1Chart(data) {
+            const entityLabels = Object.keys(data.base_metrics.per_entity);
+            const baseF1 = entityLabels.map(label => data.base_metrics.per_entity[label].f1);
+            const ftF1 = entityLabels.map(label => data.finetuned_metrics.per_entity[label].f1);
+            
+            const trace1 = {
+                x: entityLabels,
+                y: baseF1,
+                name: 'Base Model',
+                type: 'bar',
+                marker: { color: '#3498db' }
+            };
+            
+            const trace2 = {
+                x: entityLabels,
+                y: ftF1,
+                name: 'Fine-tuned Model',
+                type: 'bar',
+                marker: { color: '#2ecc71' }
+            };
+            
+            const layout = {
+                title: 'F1 Score Comparison by Entity Type',
+                barmode: 'group',
+                xaxis: { title: 'Entity Type' },
+                yaxis: { title: 'F1 Score', range: [0, 1] },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#f3f4f6' }
+            };
+            
+            Plotly.newPlot('f1-chart', [trace1, trace2], layout, { responsive: true });
+        }
+
+        function renderConfusionMatrix(data) {
+            const zData = data.confusion_matrix;
+            const xLabels = data.confusion_labels;
+            const yLabels = data.confusion_labels;
+            
+            const annotations = [];
+            let maxVal = 0;
+            for (let i = 0; i < zData.length; i++) {
+                for (let j = 0; j < zData[i].length; j++) {
+                    if (zData[i][j] > maxVal) maxVal = zData[i][j];
+                }
+            }
+
+            for (let i = 0; i < yLabels.length; i++) {
+                for (let j = 0; j < xLabels.length; j++) {
+                    const val = zData[i][j];
+                    const textColor = val > (maxVal / 2) ? '#ffffff' : '#f3f4f6';
+                    annotations.push({
+                        x: xLabels[j],
+                        y: yLabels[i],
+                        text: val > 0 ? val.toString() : '',
+                        font: {
+                            family: 'Inter, sans-serif',
+                            size: 10,
+                            color: textColor,
+                            weight: 'bold'
+                        },
+                        showarrow: false
+                    });
+                }
+            }
+
+            const trace = {
+                z: zData,
+                x: xLabels,
+                y: yLabels,
+                type: 'heatmap',
+                colorscale: [
+                    [0.0, '#111827'],
+                    [0.1, '#1e293b'],
+                    [0.5, '#4f46e5'],
+                    [1.0, '#818cf8']
+                ],
+                showscale: true,
+                colorbar: {
+                    title: 'Count',
+                    titleside: 'top',
+                    tickcolor: '#9ca3af',
+                    tickfont: { color: '#9ca3af' }
+                },
+                hoverinfo: 'text',
+                text: zData.map((row, i) => row.map((val, j) => `True Label: ${yLabels[i]}<br>Predicted Label: ${xLabels[j]}<br>Count: ${val}`))
+            };
+            
+            const layout = {
+                title: {
+                    text: 'Entity Type Confusion Matrix',
+                    font: { family: 'Space Grotesk, sans-serif', size: 16, color: '#f3f4f6', weight: 'bold' }
+                },
+                xaxis: { 
+                    title: { text: 'Predicted Label', font: { color: '#9ca3af' } },
+                    tickangle: -45,
+                    tickfont: { color: '#9ca3af' }
+                },
+                yaxis: { 
+                    title: { text: 'True Label', font: { color: '#9ca3af' } },
+                    tickfont: { color: '#9ca3af' }
+                },
+                paper_bgcolor: 'rgba(0,0,0,0)',
+                plot_bgcolor: 'rgba(0,0,0,0)',
+                font: { color: '#f3f4f6' },
+                margin: { l: 150, r: 50, b: 120, t: 80, pad: 4 },
+                annotations: annotations
+            };
+            
+            Plotly.newPlot('confusion-chart', [trace], layout, { responsive: true });
+        }
+
+        function renderMetricsTable(data) {
+            const tbody = document.getElementById('metrics-tbody');
+            tbody.innerHTML = '';
+            
+            const allEntities = new Set([
+                ...Object.keys(data.base_metrics.per_entity),
+                ...Object.keys(data.finetuned_metrics.per_entity)
+            ]);
+            
+            const tableData = [];
+            
+            allEntities.forEach(entity => {
+                const base = data.base_metrics.per_entity[entity] || { precision: 0, recall: 0, f1: 0 };
+                const ft = data.finetuned_metrics.per_entity[entity] || { precision: 0, recall: 0, f1: 0 };
+                const delta = ft.f1 - base.f1;
+                
+                tableData.push({
+                    entity,
+                    model: 'Base',
+                    precision: base.precision,
+                    recall: base.recall,
+                    f1: base.f1,
+                    delta: '-'
+                });
+                
+                tableData.push({
+                    entity,
+                    model: 'Fine-tuned',
+                    precision: ft.precision,
+                    recall: ft.recall,
+                    f1: ft.f1,
+                    delta: delta
+                });
+            });
+            
+            window.currentTableData = tableData;
+            
+            tableData.forEach(row => {
+                const tr = document.createElement('tr');
+                
+                const deltaClass = row.delta > 0 ? 'positive' : (row.delta < 0 ? 'negative' : '');
+                const deltaStr = typeof row.delta === 'number' ? row.delta.toFixed(3) : row.delta;
+                
+                tr.innerHTML = `
+                    <td>${row.entity}</td>
+                    <td>${row.model}</td>
+                    <td>${row.precision.toFixed(3)}</td>
+                    <td>${row.recall.toFixed(3)}</td>
+                    <td>${row.f1.toFixed(3)}</td>
+                    <td class="${deltaClass}">${deltaStr}</td>
+                `;
+                
+                tbody.appendChild(tr);
+            });
+        }
+
+        function sortTable(columnIndex) {
+            if (!window.currentTableData) return;
+            
+            currentSort.column = columnIndex;
+            currentSort.ascending = !currentSort.ascending;
+            
+            const keys = ['entity', 'model', 'precision', 'recall', 'f1', 'delta'];
+            const key = keys[columnIndex];
+            
+            window.currentTableData.sort((a, b) => {
+                let valA = a[key];
+                let valB = b[key];
+                
+                if (typeof valA === 'string') {
+                    valA = valA.toLowerCase();
+                    valB = valB.toLowerCase();
+                }
+                
+                if (valA < valB) return currentSort.ascending ? -1 : 1;
+                if (valA > valB) return currentSort.ascending ? 1 : -1;
+                return 0;
+            });
+            
+            renderMetricsTable(evaluationData);
+        }
+
+        function renderErrorExamples(data) {
+            const fixedMisses = data.error_analysis.fixed_misses || [];
+            const newFalsePositives = data.error_analysis.new_false_positives || [];
+            
+            const fixedContent = document.getElementById('fixed-misses-content');
+            if (fixedMisses.length === 0) {
+                fixedContent.innerHTML = '<p style="color: var(--text-muted);">No examples found.</p>';
+            } else {
+                fixedContent.innerHTML = fixedMisses.map(example => `
+                    <div class="success-box" style="background: rgba(16, 185, 129, 0.06); border-left: 4px solid var(--glow-green); padding: 0.75rem; margin-bottom: 0.5rem; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">Domain: ${example.domain}</div>
+                        <div style="font-size: 0.85rem; color: var(--text-main); margin-bottom: 0.25rem;">"${example.text}"</div>
+                        <div style="font-size: 0.8rem; color: var(--glow-green);">Entity Fixed: ${example.entity.label} (${example.entity.value})</div>
+                    </div>
+                `).join('');
+            }
+            
+            const fpContent = document.getElementById('new-false-positives-content');
+            if (newFalsePositives.length === 0) {
+                fpContent.innerHTML = '<p style="color: var(--text-muted);">No examples found.</p>';
+            } else {
+                fpContent.innerHTML = newFalsePositives.map(example => `
+                    <div class="error-box" style="background: rgba(244, 63, 94, 0.06); border-left: 4px solid var(--glow-rose); padding: 0.75rem; margin-bottom: 0.5rem; border-radius: 4px;">
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">Domain: ${example.domain}</div>
+                        <div style="font-size: 0.85rem; color: var(--text-main); margin-bottom: 0.25rem;">"${example.text}"</div>
+                        <div style="font-size: 0.8rem; color: var(--glow-rose);">New False Positive: ${example.entity.label} (${example.entity.text}) [score: ${example.entity.score.toFixed(3)}]</div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function toggleCollapsible(id) {
+            const content = document.getElementById(id);
+            content.classList.toggle('open');
+        }
 
         // Run initial metrics query and poll
         updateMetrics();

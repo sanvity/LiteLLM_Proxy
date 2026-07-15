@@ -1,16 +1,47 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
-litellm>=1.35.0
-fastapi>=0.100.0
-uvicorn>=0.22.0
-python-dotenv>=1.0.0
-pydantic>=2.0
-tiktoken>=0.5.0
-pyyaml>=6.0
-prometheus-client>=0.17.0
-requests>=2.31.0
-streamlit>=1.38.0
-transformers>=4.40.0
-torch>=2.4.0
-accelerate>=1.1.0
-streamlit-sortables>=0.3.1
 
+# ── Core Gateway ─────────────────────────────────────────────────────────────
+litellm>=1.92.0
+fastapi>=0.139.0
+uvicorn>=0.51.0
+starlette>=1.3.0
+python-dotenv>=1.2.0
+pydantic>=2.13.0
+pyyaml>=6.0.3
+requests>=2.34.0
+httpx>=0.28.0
+
+# ── Token counting & routing helpers ─────────────────────────────────────────
+tiktoken>=0.13.0
+prometheus-client>=0.25.0
+
+# ── Admin Console (Streamlit) ─────────────────────────────────────────────────
+streamlit>=1.59.0
+streamlit-sortables>=0.3.1
+altair>=6.0.0
+
+# ── ML / PII Guardrail (DeBERTa-v3) ──────────────────────────────────────────
+torch>=2.13.0
+transformers>=5.13.0
+accelerate>=1.14.0
+peft>=0.19.0
+safetensors>=0.8.0
+huggingface-hub>=1.23.0
+tokenizers>=0.22.0
+
+# ── Evaluation & Reporting ────────────────────────────────────────────────────
+scikit-learn>=1.9.0
+plotly>=6.9.0
+pandas>=3.0.0
+numpy>=2.4.0
+
+# ── Synthetic Data Generation ─────────────────────────────────────────────────
+faker>=40.0.0
+exrex>=0.12.0
+
+# ── Hyperparameter Tuning ─────────────────────────────────────────────────────
+optuna>=4.9.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-multipart>=0.0.32
+aiohttp>=3.14.0

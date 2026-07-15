@@ -1,9 +1,0 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-streamlit>=1.38.0
-requests>=2.31.0
-pyyaml>=6.0
-python-dotenv>=1.0.0
-litellm>=1.35.0
-tiktoken>=0.5.0
-transformers>=4.40.0
-torch>=2.4.0

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Union, Any, Tuple
 import asyncio
@@ -75,12 +76,59 @@ def _get_masked_and_adjusted(text: str, mask_ents: list, rewrite_ents: list) -> 
     return base, adjusted_rewrite_ents
 
 
+_custom_labels_cache = None
+_custom_labels_mtime = 0
+
+def get_custom_labels_set() -> set:
+    global _custom_labels_cache, _custom_labels_mtime
+    import os
+    import json
+    model_path = get_ner_model_path()
+    if model_path == "Isotonic/deberta-v3-base_finetuned_ai4privacy_v2":
+        return set()
+    config_file = os.path.join(model_path, "config.json")
+    
+    if not os.path.exists(config_file):
+        return set()
+        
+    try:
+        mtime = os.path.getmtime(config_file)
+        if _custom_labels_cache is not None and mtime == _custom_labels_mtime:
+            return _custom_labels_cache
+            
+        custom_lbls = set()
+        with open(config_file, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+            id2label = cfg.get("id2label", {})
+            for k, v in id2label.items():
+                try:
+                    if int(k) >= 111:
+                        lbl = v
+                        if lbl.startswith("B-") or lbl.startswith("I-"):
+                            lbl = lbl[2:]
+                        custom_lbls.add(lbl.upper().replace("_", "").replace(" ", ""))
+                except ValueError:
+                    pass
+        _custom_labels_cache = custom_lbls
+        _custom_labels_mtime = mtime
+        return custom_lbls
+    except Exception as e:
+        verbose_proxy_logger.error(f"[DeBERTa PII] Error loading custom labels: {e}")
+        return _custom_labels_cache or set()
+
 def canonicalize_label(model_label: str) -> str:
     clean_lbl = model_label
     if model_label.startswith("B-") or model_label.startswith("I-"):
         clean_lbl = model_label[2:]
         
     l = clean_lbl.upper().replace("_", "").replace(" ", "")
+    
+    try:
+        if l in get_custom_labels_set():
+            return clean_lbl.lower().replace("_", " ")
+    except Exception:
+        pass
+
     if "FIRSTNAME" in l or "LASTNAME" in l or "SURNAME" in l or "NAME" in l or "PER" in l:
         return "person"
     if "EMAIL" in l:
@@ -104,14 +152,103 @@ def canonicalize_label(model_label: str) -> str:
     return clean_lbl.lower()
 
 
+
 active_guardrails = []
 
 def get_ner_model_path() -> str:
     import os
-    local_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", "finetuned-deberta"))
-    if os.path.exists(os.path.join(local_path, "config.json")):
+    import json
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    registry_path = os.path.abspath(os.path.join(current_dir, "..", "models", "versions_registry.json"))
+    if os.path.exists(registry_path):
+        try:
+            with open(registry_path, "r", encoding="utf-8") as f:
+                registry = json.load(f)
+            active_version = registry.get("active_version")
+            if active_version:
+                version_path = os.path.abspath(os.path.join(current_dir, "..", "models", "versions", active_version))
+                if os.path.exists(os.path.join(version_path, "config.json")) or os.path.exists(os.path.join(version_path, "adapter_config.json")):
+                    return version_path
+        except Exception:
+            pass
+            
+    local_path = os.path.abspath(os.path.join(current_dir, "..", "models", "finetuned-deberta"))
+    if os.path.exists(os.path.join(local_path, "config.json")) or os.path.exists(os.path.join(local_path, "adapter_config.json")):
         return local_path
     return "Isotonic/deberta-v3-base_finetuned_ai4privacy_v2"
+
+
+def load_ner_pipeline(model_path: str = None):
+    import os
+    from transformers import AutoTokenizer, AutoModelForTokenClassification, AutoConfig, pipeline
+    
+    if model_path is None:
+        model_path = get_ner_model_path()
+        
+    base_model_name = "Isotonic/deberta-v3-base_finetuned_ai4privacy_v2"
+    
+    # Check if the target path is a PEFT/LoRA model
+    if os.path.exists(os.path.join(model_path, "adapter_config.json")):
+        verbose_proxy_logger.info(f"[DeBERTa PII] Loading LoRA adapter from {model_path} over base {base_model_name}")
+        from peft import PeftModel
+        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+        
+        # Dynamically determine classifier head size from adapter checkpoint weights if config.json is missing
+        num_labels_override = None
+        safetensors_path = os.path.join(model_path, "adapter_model.safetensors")
+        bin_path = os.path.join(model_path, "adapter_model.bin")
+        if os.path.exists(safetensors_path):
+            try:
+                from safetensors import safe_open
+                with safe_open(safetensors_path, framework="pt", device="cpu") as f:
+                    for k in f.keys():
+                        if "classifier" in k and ("bias" in k or "weight" in k):
+                            tensor = f.get_slice(k)
+                            shape = tensor.get_shape()
+                            num_labels_override = shape[0]
+                            break
+            except Exception:
+                pass
+        if num_labels_override is None and os.path.exists(bin_path):
+            try:
+                import torch
+                state_dict = torch.load(bin_path, map_location="cpu")
+                for k, v in state_dict.items():
+                    if "classifier" in k and ("bias" in k or "weight" in k):
+                        num_labels_override = v.shape[0]
+                        break
+            except Exception:
+                pass
+
+        if os.path.exists(os.path.join(model_path, "config.json")):
+            config = AutoConfig.from_pretrained(model_path)
+        else:
+            config = AutoConfig.from_pretrained(base_model_name)
+            if num_labels_override is not None:
+                config.num_labels = num_labels_override
+                config.id2label = {i: f"LABEL_{i}" for i in range(num_labels_override)}
+                config.label2id = {f"LABEL_{i}": i for i in range(num_labels_override)}
+            
+        base_model = AutoModelForTokenClassification.from_pretrained(
+            base_model_name,
+            config=config,
+            ignore_mismatched_sizes=True,
+            low_cpu_mem_usage=False
+        )
+        model = PeftModel.from_pretrained(base_model, model_path, low_cpu_mem_usage=False)
+    else:
+        # Fallback to standard full model load
+        verbose_proxy_logger.info(f"[DeBERTa PII] Loading full model from {model_path}")
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
+        model = AutoModelForTokenClassification.from_pretrained(model_path, low_cpu_mem_usage=False)
+        
+    return pipeline(
+        "token-classification",
+        model=model,
+        tokenizer=tokenizer,
+        aggregation_strategy="simple"
+    )
+
 
 class DeBERTaPIIGuardrail(CustomGuardrail):
     def __init__(self, **kwargs):
@@ -123,6 +260,8 @@ class DeBERTaPIIGuardrail(CustomGuardrail):
     def reload_model(self):
         verbose_proxy_logger.info("[DeBERTa PII] Reloading model pipeline...")
         self._model = None
+        import threading
+        threading.Thread(target=lambda: self.model, daemon=True).start()
 
     def should_run_guardrail(self, data, event_type) -> bool:
         res = super().should_run_guardrail(data, event_type)
@@ -132,14 +271,7 @@ class DeBERTaPIIGuardrail(CustomGuardrail):
     @property
     def model(self):
         if self._model is None:
-            model_path = get_ner_model_path()
-            verbose_proxy_logger.info(f"[DeBERTa PII] Loading {model_path} pipeline")
-            from transformers import pipeline
-            self._model = pipeline(
-                "token-classification",
-                model=model_path,
-                aggregation_strategy="simple"
-            )
+            self._model = load_ner_pipeline()
             verbose_proxy_logger.info("[DeBERTa PII] Model ready.")
         return self._model
 
@@ -344,58 +476,59 @@ class DeBERTaPIIGuardrail(CustomGuardrail):
 
 
 # Dynamic registration for LiteLLM custom guardrail
-try:
-    from litellm.proxy.guardrails.guardrail_registry import guardrail_initializer_registry
+import os
+if os.environ.get("LITELLM_TRAINING_ACTIVE") != "1":
+    try:
+        from litellm.proxy.guardrails.guardrail_registry import guardrail_initializer_registry
 
-    def initialize_guardrail(litellm_params, guardrail, llm_router=None):
-        verbose_proxy_logger.info(f"[DeBERTa PII] initialize_guardrail called for {guardrail.get('guardrail_name')}")
-        import litellm
-        mode = litellm_params.mode
-        default_on = litellm_params.default_on
-        if hasattr(litellm_params, "model_dump"):
-            extra_params = litellm_params.model_dump(exclude_none=True)
-        else:
-            extra_params = dict(litellm_params) if litellm_params else {}
-        for key in ["guardrail", "mode", "default_on"]:
-            extra_params.pop(key, None)
-        
-        cb = DeBERTaPIIGuardrail(
-            guardrail_name=guardrail["guardrail_name"],
-            event_hook=mode,
-            default_on=default_on,
-            **extra_params
-        )
-        litellm.logging_callback_manager.add_litellm_callback(cb)
-        return cb
+        def initialize_guardrail(litellm_params, guardrail, llm_router=None):
+            verbose_proxy_logger.info(f"[DeBERTa PII] initialize_guardrail called for {guardrail.get('guardrail_name')}")
+            import litellm
+            mode = litellm_params.mode
+            default_on = litellm_params.default_on
+            if hasattr(litellm_params, "model_dump"):
+                extra_params = litellm_params.model_dump(exclude_none=True)
+            else:
+                extra_params = dict(litellm_params) if litellm_params else {}
+            for key in ["guardrail", "mode", "default_on"]:
+                extra_params.pop(key, None)
+            
+            cb = DeBERTaPIIGuardrail(
+                guardrail_name=guardrail["guardrail_name"],
+                event_hook=mode,
+                default_on=default_on,
+                **extra_params
+            )
+            litellm.logging_callback_manager.add_litellm_callback(cb)
+            return cb
 
-    guardrail_initializer_registry["custom"] = initialize_guardrail
-except ImportError:
-    pass
+        guardrail_initializer_registry["custom"] = initialize_guardrail
+    except ImportError:
+        pass
 
 
-from litellm.integrations.custom_logger import CustomLogger
+    from litellm.integrations.custom_logger import CustomLogger
 
-class DeBERTaRegisterCallback(CustomLogger):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    class DeBERTaRegisterCallback(CustomLogger):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
 
-deberta_register_callback = DeBERTaRegisterCallback()
+    deberta_register_callback = DeBERTaRegisterCallback()
+else:
+    deberta_register_callback = None
 
 def get_active_model_labels() -> List[str]:
     import os
     import json
     
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.abspath(os.path.join(current_dir, "..", "models", "finetuned-deberta"))
-    config_file = os.path.join(model_path, "config.json")
-    
+    model_path = get_ner_model_path()
     default_labels = [
         "person", "phone number", "social security number", "credit card number",
         "api key", "email address", "address", "bank account number", "passport number", "password"
     ]
-    
-    if not os.path.exists(config_file):
+    if model_path == "Isotonic/deberta-v3-base_finetuned_ai4privacy_v2":
         return default_labels
+    config_file = os.path.join(model_path, "config.json")
         
     try:
         with open(config_file, "r", encoding="utf-8") as f:
@@ -410,6 +543,32 @@ def get_active_model_labels() -> List[str]:
         return sorted(list(labels))
     except Exception:
         return default_labels
+
+def get_custom_model_labels() -> List[str]:
+    import os
+    import json
+    
+    model_path = get_ner_model_path()
+    if model_path == "Isotonic/deberta-v3-base_finetuned_ai4privacy_v2":
+        return []
+    config_file = os.path.join(model_path, "config.json")
+        
+    try:
+        with open(config_file, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+            id2label = cfg.get("id2label", {})
+            
+        labels = set()
+        for k, lbl in id2label.items():
+            try:
+                if int(k) >= 111 and lbl != "O":
+                    canonical = canonicalize_label(lbl)
+                    labels.add(canonical)
+            except ValueError:
+                pass
+        return sorted(list(labels))
+    except Exception:
+        return []
 
 def get_model_label_ids(id2label: dict, canonicalize_fn, entity_label: str) -> Tuple[Optional[int], Optional[int]]:
     entity_label_clean = entity_label.upper().replace("_", "").replace(" ", "")
@@ -455,35 +614,63 @@ def train_deberta_model(
     output_dir: str,
     epochs: int = 3,
     learning_rate: float = 5e-5,
-    batch_size: int = 8
+    batch_size: int = 8,
+    use_optuna: bool = False,
+    optuna_trials: int = 3
 ):
     """
     Supervised fine-tuning of the DeBERTa token classification model on custom PII samples.
     """
     import os
+    import gc
     import torch
-    from transformers import (
-        AutoTokenizer,
-        AutoModelForTokenClassification,
-        TrainingArguments,
-        Trainer,
-        DataCollatorForTokenClassification
+    from transformers import AutoTokenizer
+    from transformers import AutoModelForTokenClassification
+    from transformers import AutoConfig
+    from transformers import TrainingArguments
+    from transformers import Trainer
+    from transformers import DataCollatorForTokenClassification
+    # ── Free the inference pipeline BEFORE loading the training model ─────────
+    verbose_proxy_logger.info(
+        "[DeBERTa Training] Unloading inference pipeline to free memory for training..."
     )
+    for guardrail_instance in active_guardrails:
+        guardrail_instance._model = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    verbose_proxy_logger.info("[DeBERTa Training] Inference pipeline unloaded. Proceeding with training load.")
     
     base_model_name = "Isotonic/deberta-v3-base_finetuned_ai4privacy_v2"
     
     # If a previous fine-tuned model exists, load from it to accumulate training
-    if os.path.exists(os.path.join(output_dir, "config.json")):
+    if os.path.exists(os.path.join(output_dir, "config.json")) or os.path.exists(os.path.join(output_dir, "adapter_config.json")):
         model_name_or_path = output_dir
         verbose_proxy_logger.info(f"[DeBERTa Training] Resuming training from local path: {model_name_or_path}")
     else:
         model_name_or_path = base_model_name
         verbose_proxy_logger.info(f"[DeBERTa Training] Loading base pre-trained model: {model_name_or_path}")
-        
     tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    model = AutoModelForTokenClassification.from_pretrained(model_name_or_path)
-    
-    id2label = model.config.id2label
+
+    # ── Parse model configuration and determine labels mapping ─────────────────
+    try:
+        if os.path.exists(os.path.join(model_name_or_path, "adapter_config.json")):
+            with open(os.path.join(model_name_or_path, "adapter_config.json"), "r", encoding="utf-8") as f:
+                peft_cfg = json.load(f)
+            raw_id2label = peft_cfg.get("id2label")
+            if raw_id2label:
+                id2label = {int(k): v for k, v in raw_id2label.items()}
+            else:
+                config = AutoConfig.from_pretrained(base_model_name)
+                id2label = config.id2label.copy()
+        else:
+            config = AutoConfig.from_pretrained(model_name_or_path)
+            id2label = config.id2label.copy()
+    except Exception as parse_err:
+        verbose_proxy_logger.warning(f"[DeBERTa Training] Failed to parse existing config: {parse_err}. Loading default config.")
+        config = AutoConfig.from_pretrained(base_model_name)
+        id2label = config.id2label.copy()
+        
     label2id = {v: k for k, v in id2label.items()}
     
     # Identify unique custom labels from training dataset
@@ -503,37 +690,81 @@ def train_deberta_model(
             if f"I-{suffix}" not in label2id:
                 missing_labels.append(f"I-{suffix}")
                 
+    old_num_labels = len(id2label)
     if missing_labels:
-        verbose_proxy_logger.info(f"[DeBERTa Training] Expanding classifier head to support new labels: {missing_labels}")
-        import torch.nn as nn
-        
-        old_num_labels = len(id2label)
-        new_num_labels = old_num_labels + len(missing_labels)
-        
         for idx, new_lbl in enumerate(missing_labels):
             new_id = old_num_labels + idx
             id2label[new_id] = new_lbl
             label2id[new_lbl] = new_id
+
+    # ── Model Initialization Hook (model_init) for clean trials / training ───
+    def model_init_fn():
+        from peft import LoraConfig, get_peft_model, PeftModel
+        verbose_proxy_logger.info(f"[DeBERTa Training] Loading base model weights: {base_model_name}")
+        
+        try:
+            base_model = AutoModelForTokenClassification.from_pretrained(
+                base_model_name,
+                ignore_mismatched_sizes=True,
+                low_cpu_mem_usage=False
+            )
+        except Exception as err:
+            verbose_proxy_logger.critical(f"[DeBERTa Training] Failed to load base model: {err}")
+            raise err
             
-        model.config.id2label = id2label
-        model.config.label2id = label2id
-        model.config.num_labels = new_num_labels
-        
-        # Expand classifier weights
-        old_classifier = model.classifier
-        new_classifier = nn.Linear(old_classifier.in_features, new_num_labels)
-        
-        # Copy original weights
-        new_classifier.weight.data[:old_num_labels] = old_classifier.weight.data
-        new_classifier.bias.data[:old_num_labels] = old_classifier.bias.data
-        
-        # Initialize new labels weights
-        nn.init.normal_(new_classifier.weight.data[old_num_labels:], std=0.02)
-        nn.init.zeros_(new_classifier.bias.data[old_num_labels:])
-        
-        model.classifier = new_classifier
-        model.num_labels = new_num_labels
-        
+        # 1. Expand classifier head on base model first before wrapping with PEFT
+        if missing_labels:
+            import torch.nn as nn
+            verbose_proxy_logger.info(f"[DeBERTa Training] Model init: expanding classifier head to {len(id2label)} labels")
+            base_model.config.id2label = id2label.copy()
+            base_model.config.label2id = label2id.copy()
+            base_model.config.num_labels = len(id2label)
+            
+            old_classifier = base_model.classifier
+            current_num_labels = old_classifier.out_features
+            labels_to_copy = min(current_num_labels, len(id2label))
+            
+            new_classifier = nn.Linear(old_classifier.in_features, len(id2label))
+            new_classifier.weight.data[:labels_to_copy] = old_classifier.weight.data[:labels_to_copy]
+            new_classifier.bias.data[:labels_to_copy] = old_classifier.bias.data[:labels_to_copy]
+            
+            if len(id2label) > labels_to_copy:
+                nn.init.normal_(new_classifier.weight.data[labels_to_copy:], std=0.02)
+                nn.init.zeros_(new_classifier.bias.data[labels_to_copy:])
+                
+            base_model.classifier = new_classifier
+            base_model.num_labels = len(id2label)
+            
+        # 2. Wrap with PEFT
+        is_peft = False
+        if os.path.exists(os.path.join(model_name_or_path, "adapter_config.json")):
+            try:
+                m = PeftModel.from_pretrained(base_model, model_name_or_path, is_trainable=True, low_cpu_mem_usage=False)
+                is_peft = True
+                verbose_proxy_logger.info("[DeBERTa Training] Loaded existing LoRA adapter for continued training.")
+            except Exception as peft_err:
+                verbose_proxy_logger.warning(f"[DeBERTa Training] Failed to load PEFT model from '{model_name_or_path}': {peft_err}. Re-initializing new adapter.")
+                
+        if not is_peft:
+            peft_config = LoraConfig(
+                task_type="TOKEN_CLS",
+                r=32,
+                lora_alpha=64,
+                lora_dropout=0.0,
+                target_modules=["query_proj", "key_proj", "value_proj"],
+                modules_to_save=["classifier"]
+            )
+            m = get_peft_model(base_model, peft_config)
+            verbose_proxy_logger.info("[DeBERTa Training] Initialized new LoRA adapter.")
+            
+        return m
+
+    # Pre-load or skip loading based on use_optuna
+    if not use_optuna:
+        model = model_init_fn()
+    else:
+        model = None
+
     tokenized_inputs = []
     
     for item in dataset:
@@ -597,7 +828,7 @@ def train_deberta_model(
             loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
             
             return (loss, outputs) if return_outputs else loss
-
+ 
     class NERDataset(torch.utils.data.Dataset):
         def __init__(self, encodings):
             self.encodings = encodings
@@ -633,15 +864,34 @@ def train_deberta_model(
     weights = [min(w, 10.0) for w in weights]
     verbose_proxy_logger.info(f"[DeBERTa Training] Custom class training weights calculated: {weights}")
     
+    # For PEFT/LoRA models, scale up learning rate to compensate for frozen base weights
+    peft_learning_rate = learning_rate * 15
+    
     training_args = TrainingArguments(
         output_dir=output_dir,
+
+        # ── Epochs & optimisation ─────────────────────────────────────────
         num_train_epochs=epochs,
         per_device_train_batch_size=batch_size,
-        learning_rate=learning_rate,
+        learning_rate=peft_learning_rate,
         weight_decay=0.01,
+        gradient_accumulation_steps=2,   # effective batch = batch_size × 2
+
+        # ── Checkpointing ─────────────────────────────────────────────────
+        # Save one checkpoint per epoch so we can resume after any crash.
+        save_strategy="epoch",
+        save_total_limit=2,              # keep last 2 checkpoints to save disk
+        load_best_model_at_end=False,    # requires eval_dataset; off by default
+
+        # ── Memory efficiency ─────────────────────────────────────────────
+        gradient_checkpointing=False,
+        fp16=torch.cuda.is_available(),  # mixed precision on GPU; safe no-op on CPU
+
+        # ── DataLoader state ──────────────────────────────────────────────
+        dataloader_num_workers=0,
+
         logging_steps=1,
-        save_strategy="no",
-        report_to="none"
+        report_to="none",
     )
     
     data_collator = DataCollatorForTokenClassification(tokenizer=tokenizer)
@@ -650,7 +900,6 @@ def train_deberta_model(
     from packaging import version
     
     trainer_kwargs = {
-        "model": model,
         "args": training_args,
         "train_dataset": train_dataset,
         "data_collator": data_collator
@@ -659,20 +908,239 @@ def train_deberta_model(
         trainer_kwargs["processing_class"] = tokenizer
     else:
         trainer_kwargs["tokenizer"] = tokenizer
+
+    # ── Progress callback to write logs to json for Streamlit UI visualization ──
+    from transformers import TrainerCallback
+    import json
+
+    class StreamlitProgressCallback(TrainerCallback):
+        def __init__(self, output_dir):
+            self.output_dir = output_dir
+            self.history_filepath = os.path.join(output_dir, "training_history.json")
+
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            if logs:
+                try:
+                    os.makedirs(self.output_dir, exist_ok=True)
+                    with open(self.history_filepath, "w", encoding="utf-8") as f:
+                        json.dump(state.log_history, f, indent=2)
+                except Exception as e:
+                    verbose_proxy_logger.error(f"[StreamlitProgressCallback] Failed to write logs: {e}")
+
+    # ── Optuna Hyperparameter Optimization Search ────────────────────────────
+    if use_optuna:
+        verbose_proxy_logger.info("[DeBERTa Training] Starting hyperparameter tuning with Optuna...")
         
+        # Define search space
+        def hp_space_definition(trial):
+            return {
+                "learning_rate": trial.suggest_float("learning_rate", 1e-5, 1e-4, log=True),
+                "per_device_train_batch_size": trial.suggest_categorical("per_device_train_batch_size", [4, 8]),
+                "num_train_epochs": trial.suggest_int("num_train_epochs", 2, 5),
+            }
+
+        # Initialize temporary trainer for tuning (uses validation loss automatically)
+        import inspect
+        tuning_args_kwargs = {
+            "output_dir": output_dir,
+            "save_strategy": "no",
+            "logging_steps": 1,
+            "report_to": "none",
+            "disable_tqdm": True,
+            "fp16": torch.cuda.is_available()
+        }
+        sig = inspect.signature(TrainingArguments.__init__)
+        if "eval_strategy" in sig.parameters:
+            tuning_args_kwargs["eval_strategy"] = "epoch"
+        else:
+            tuning_args_kwargs["evaluation_strategy"] = "epoch"
+            
+        tuning_args = TrainingArguments(**tuning_args_kwargs)
+        
+        tuning_kwargs = trainer_kwargs.copy()
+        tuning_kwargs["args"] = tuning_args
+        tuning_kwargs["model_init"] = model_init_fn
+        tuning_kwargs["eval_dataset"] = train_dataset # self-evaluation on training set
+
+        tuning_trainer = WeightedTrainer(class_weights=weights, **tuning_kwargs)
+        
+        best_run = tuning_trainer.hyperparameter_search(
+            direction="minimize",
+            backend="optuna",
+            hp_space=hp_space_definition,
+            n_trials=optuna_trials
+        )
+        
+        verbose_proxy_logger.info(f"[DeBERTa Training] Optimal parameters found: {best_run.hyperparameters}")
+        
+        # Apply optimal parameters to training_args
+        for param_name, param_value in best_run.hyperparameters.items():
+            setattr(training_args, param_name, param_value)
+
+    # Initialize the final trainer with correct concrete model
+    final_model = model_init_fn()
+    trainer_kwargs["model"] = final_model
     trainer = WeightedTrainer(class_weights=weights, **trainer_kwargs)
-    
-    verbose_proxy_logger.info("[DeBERTa Training] Starting training arguments loop...")
-    trainer.train()
-    
+    trainer.add_callback(StreamlitProgressCallback(output_dir))
+
+    # ── Auto-detect latest checkpoint for seamless resumption ─────────────
+    import glob
+
+    def _latest_checkpoint(directory: str):
+        """Return the most-recent checkpoint-N folder, or None if none exist."""
+        candidates = glob.glob(os.path.join(directory, "checkpoint-*"))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda p: int(p.rsplit("-", 1)[-1]))
+        return candidates[-1]
+
+    checkpoint_path = _latest_checkpoint(output_dir)
+    if checkpoint_path:
+        verbose_proxy_logger.info(
+            f"[DeBERTa Training] Resuming from checkpoint: {checkpoint_path}"
+        )
+    else:
+        verbose_proxy_logger.info(
+            "[DeBERTa Training] No prior checkpoint found — starting fresh."
+        )
+
+    # ── Training loop with crash recovery ────────────────────────────────
+    verbose_proxy_logger.info("[DeBERTa Training] Starting training loop...")
+    try:
+        trainer.train(resume_from_checkpoint=checkpoint_path or False)
+    except KeyboardInterrupt:
+        last = _latest_checkpoint(output_dir)
+        verbose_proxy_logger.warning(
+            f"[DeBERTa Training] Interrupted by user. "
+            f"Latest safe checkpoint: {last or 'none'}"
+        )
+        raise
+    except Exception as e:
+        if checkpoint_path:
+            verbose_proxy_logger.warning(
+                f"[DeBERTa Training] Failed to resume from checkpoint '{checkpoint_path}' ({e}). "
+                "Cleaning up checkpoint and retrying training from scratch..."
+            )
+            try:
+                import shutil
+                if os.path.exists(checkpoint_path):
+                    shutil.rmtree(checkpoint_path, ignore_errors=True)
+            except Exception as cleanup_err:
+                verbose_proxy_logger.warning(f"Could not clean up checkpoint directory: {cleanup_err}")
+            
+            # Re-initialize the trainer and start from scratch
+            final_model = model_init_fn()
+            trainer_kwargs["model"] = final_model
+            trainer = WeightedTrainer(class_weights=weights, **trainer_kwargs)
+            trainer.add_callback(StreamlitProgressCallback(output_dir))
+            
+            try:
+                trainer.train(resume_from_checkpoint=False)
+            except Exception as retry_err:
+                verbose_proxy_logger.error(
+                    f"[DeBERTa Training] Retry training from scratch also failed: {retry_err}", exc_info=True
+                )
+                raise retry_err
+        else:
+            verbose_proxy_logger.error(
+                f"[DeBERTa Training] Failure during training: {e}", exc_info=True
+            )
+            raise e
+    finally:
+        last = _latest_checkpoint(output_dir)
+        if last:
+            verbose_proxy_logger.info(
+                f"[DeBERTa Training] Last checkpoint preserved at: {last}"
+            )
+
     os.makedirs(output_dir, exist_ok=True)
-    trainer.save_model(output_dir)
-    tokenizer.save_pretrained(output_dir)
-    verbose_proxy_logger.info(f"[DeBERTa Training] Saved fine-tuned checkpoint model to: {output_dir}")
+
+    # ── Release the live inference model's memory-map lock before saving ───────
+    # The DeBERTaPIIGuardrail pipeline holds an mmap handle to the model files.
+    # On Windows this prevents overwriting them (OS error 1224). Nulling
+    # _model forces the pipeline to be garbage-collected and the lock released.
+    verbose_proxy_logger.info(
+        "[DeBERTa Training] Releasing inference model lock before saving..."
+    )
+    for guardrail_instance in active_guardrails:
+        guardrail_instance._model = None
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    # ── Save to a temp dir, then atomic-replace the output dir ──────────────
+    # This prevents a partial write from corrupting the live model directory
+    # if the process is killed mid-save.
+    import tempfile, shutil
+    tmp_dir = tempfile.mkdtemp(dir=os.path.dirname(output_dir), prefix="deberta_tmp_")
+    try:
+        verbose_proxy_logger.info(
+            f"[DeBERTa Training] Saving model to temp dir: {tmp_dir}"
+        )
+        trainer.save_model(tmp_dir)
+        tokenizer.save_pretrained(tmp_dir)
+        trainer.model.config.save_pretrained(tmp_dir)
+
+        # Move/copy training_history.json to temp dir so it survives folder replacement
+        history_file_src = os.path.join(output_dir, "training_history.json")
+        if os.path.exists(history_file_src):
+            try:
+                shutil.copy(history_file_src, os.path.join(tmp_dir, "training_history.json"))
+            except Exception as copy_err:
+                verbose_proxy_logger.error(f"[DeBERTa Training] History copy failed: {copy_err}")
+        else:
+            try:
+                with open(os.path.join(tmp_dir, "training_history.json"), "w", encoding="utf-8") as f:
+                    json.dump(trainer.state.log_history, f, indent=2)
+            except Exception as dump_err:
+                verbose_proxy_logger.error(f"[DeBERTa Training] History dump failed: {dump_err}")
+
+        # Atomic replace: remove old output_dir contents and move tmp in
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        shutil.move(tmp_dir, output_dir)
+        verbose_proxy_logger.info(
+            f"[DeBERTa Training] Model saved successfully to: {output_dir}"
+        )
+    except Exception as save_err:
+        verbose_proxy_logger.error(
+            f"[DeBERTa Training] Save failed: {save_err}", exc_info=True
+        )
+        # Clean up temp dir if move didn't happen
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
 
 if __name__ == "__main__":
+    import sys
+    import json
     import logging
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--train":
+        if len(sys.argv) < 3:
+            print("Usage: python deberta_pii_guardrail.py --train <config_json_path>", file=sys.stderr)
+            sys.exit(1)
+        config_path = sys.argv[2]
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        
+        train_deberta_model(
+            dataset=cfg["dataset"],
+            output_dir=cfg["output_dir"],
+            epochs=cfg.get("epochs", 3),
+            learning_rate=cfg.get("learning_rate", 5e-5),
+            batch_size=cfg.get("batch_size", 8),
+            use_optuna=cfg.get("use_optuna", False),
+            optuna_trials=cfg.get("optuna_trials", 3)
+        )
+        try:
+            os.remove(config_path)
+        except Exception:
+            pass
+        sys.exit(0)
+
     # Set up simple logging for console runner
     logging.basicConfig(level=logging.INFO)
 

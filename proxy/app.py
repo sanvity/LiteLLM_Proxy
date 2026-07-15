@@ -1,8 +1,9 @@
 import os
+import json
 import time
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, Depends, Body, BackgroundTasks
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,10 @@ class TrainDebertaRequest(BaseModel):
     epochs: Optional[int] = Field(default=15, description="Number of training epochs")
     learning_rate: Optional[float] = Field(default=1e-4, description="Learning rate")
     batch_size: Optional[int] = Field(default=8, description="Batch size for training")
+    use_optuna: Optional[bool] = Field(default=False, description="Whether to run hyperparameter tuning with Optuna first")
+    optuna_trials: Optional[int] = Field(default=3, description="Number of trials for Optuna tuning")
+    baseline_version_id: Optional[str] = Field(default=None, description="Model version ID to start fine-tuning from (or None/base for default)")
+
 
 class ChatMessage(BaseModel):
     role: str = Field(..., description="Role of the message author (system, user, assistant)")
@@ -52,9 +57,23 @@ class LiteLLMProxyApp:
         self.router = LiteLLMProxyRouter(config=self.config)
         
         # Training state parameters
-        self.training_status = "idle"
-        self.training_progress = ""
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        finetuned_config = os.path.abspath(os.path.join(current_dir, "..", "models", "finetuned-deberta", "config.json"))
+        if os.path.exists(finetuned_config):
+            self.training_status = "completed"
+            self.training_progress = "Training successfully completed. Local model active."
+        else:
+            self.training_status = "idle"
+            self.training_progress = ""
         self.training_error = None
+        
+        # MLOps Model Registry and Evaluation state parameters
+        from .mlops import ModelRegistry
+        self.registry = ModelRegistry(os.path.abspath(os.path.join(current_dir, "..", "models")))
+        self.evaluation_status = "idle"
+        self.evaluation_progress = ""
+        self.evaluation_error = None
         
         # Initialize FastAPI app
         self.app = FastAPI(
@@ -78,29 +97,10 @@ class LiteLLMProxyApp:
     def _register_routes(self):
         """Registers FastAPI endpoints to the underlying app instance."""
         
-        @self.app.get("/", response_class=HTMLResponse)
+        @self.app.get("/", response_class=RedirectResponse)
         async def serve_ui():
-            """Serves the interactive single-page application dashboard for model queries and metric evaluations."""
-            try:
-                # Resolve index.html path relative to app.py
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                template_path = os.path.join(current_dir, "templates", "index.html")
-                
-                with open(template_path, "r", encoding="utf-8") as f:
-                    html_content = f.read()
-                    
-                headers = {
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                    "Expires": "0"
-                }
-                return HTMLResponse(content=html_content, status_code=200, headers=headers)
-            except Exception as e:
-                # Fallback raw HTML if template is missing or fails to load
-                return HTMLResponse(
-                    content=f"<html><body><h1>LiteLLM Proxy API Online</h1><p>UI loading error: {e}</p></body></html>", 
-                    status_code=500
-                )
+            """Redirects to the active Streamlit frontend app."""
+            return RedirectResponse(url="https://sanvity-litellm-proxy-app-surcgq.streamlit.app")
         
         @self.app.get("/health")
         async def health():
@@ -128,6 +128,22 @@ class LiteLLMProxyApp:
                 "registered_virtual_models": list(set(e.model_name for e in self.config.endpoints)),
                 "registered_physical_providers": list(set(e.model.split("/")[0] for e in self.config.endpoints))
             }
+
+        @self.app.get("/api/evaluation")
+        async def get_evaluation_data():
+            """Returns the latest PII guardrail evaluation data for the frontend."""
+            import os
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            eval_json_path = os.path.abspath(os.path.join(current_dir, "..", "data", "evaluation_data.json"))
+            
+            if not os.path.exists(eval_json_path):
+                raise HTTPException(status_code=404, detail="Evaluation data not found. Run evaluate.py to generate evaluation report.")
+            
+            try:
+                with open(eval_json_path, "r") as f:
+                    return json.load(f)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to load evaluation data: {str(e)}")
 
         @self.app.get("/v1/models")
         async def list_models():
@@ -230,13 +246,18 @@ class LiteLLMProxyApp:
         @self.app.get("/ui/pii-config")
         async def get_pii_config():
             """Returns the current PII guardrail configuration."""
-            from guardrails.deberta_pii_guardrail import get_active_model_labels
+            from guardrails.deberta_pii_guardrail import get_active_model_labels, get_custom_model_labels
             labels = get_active_model_labels()
+            model_custom = get_custom_model_labels()
+            saved_custom = getattr(self.router, "custom_labels", [])
+            custom_labels = sorted(list(set(model_custom + saved_custom)))
+            combined_labels = sorted(list(set(labels + custom_labels)))
             return {
                 "pii_enabled": getattr(self.router, "pii_enabled", False),
                 "pii_action": getattr(self.router, "pii_action", "MASK"),
                 "pii_policy": getattr(self.router, "pii_policy", None),
-                "active_labels": labels
+                "active_labels": combined_labels,
+                "custom_labels": custom_labels
             }
 
         @self.app.post("/ui/pii-config")
@@ -245,7 +266,38 @@ class LiteLLMProxyApp:
             self.router.pii_enabled = config.pii_enabled
             self.router.pii_action = config.pii_action
             self.router.pii_policy = config.pii_policy
-            return {"status": "success", "message": f"PII Guardrail configuration synchronized in memory: enabled={config.pii_enabled}, action={config.pii_action}."}
+            self.router.save_pii_guardrail_config()
+            if config.pii_enabled:
+                import threading
+                threading.Thread(target=lambda: self.router._get_pii_guardrail().model, daemon=True).start()
+            return {"status": "success", "message": f"PII Guardrail configuration synchronized in memory and saved to disk: enabled={config.pii_enabled}, action={config.pii_action}."}
+
+        @self.app.get("/ui/safety-config")
+        async def get_safety_config():
+            """Returns the current content safety guardrail configuration."""
+            return {
+                "enabled": getattr(self.router, "safety_enabled", {
+                    "jailbreak": False, "toxicity": False, "prompt_injection": False
+                }),
+                "action": getattr(self.router, "safety_action", {
+                    "jailbreak": "BLOCK", "toxicity": "BLOCK", "prompt_injection": "BLOCK"
+                }),
+            }
+
+        @self.app.post("/ui/safety-config")
+        async def update_safety_config(payload: dict = Body(...)):
+            """Updates and persists the content safety guardrail configuration."""
+            enabled = payload.get("enabled", {})
+            action  = payload.get("action", {})
+            for key in ("jailbreak", "toxicity", "prompt_injection"):
+                if key in enabled:
+                    self.router.safety_enabled[key] = bool(enabled[key])
+                if key in action:
+                    self.router.safety_action[key] = action[key]
+            self.router.save_safety_guardrail_config()
+            return {"status": "success", "message": "Safety guardrail configuration saved."}
+
+
 
         def run_training_in_background(req: TrainDebertaRequest):
             try:
@@ -266,22 +318,103 @@ class LiteLLMProxyApp:
                 current_dir = os.path.dirname(os.path.abspath(__file__))
                 output_dir = os.path.abspath(os.path.join(current_dir, "..", "models", "finetuned-deberta"))
                 
-                self.training_progress = "Executing Hugging Face Trainer fine-tuning loop..."
+                # Prep staging directory based on selected baseline
+                import shutil
+                if os.path.exists(output_dir):
+                    shutil.rmtree(output_dir, ignore_errors=True)
+                os.makedirs(output_dir, exist_ok=True)
                 
-                from guardrails.deberta_pii_guardrail import train_deberta_model, active_guardrails
+                if req.baseline_version_id and req.baseline_version_id != "base":
+                    baseline_path = os.path.abspath(os.path.join(current_dir, "..", "models", "versions", req.baseline_version_id))
+                    if os.path.exists(baseline_path):
+                        from litellm._logging import verbose_proxy_logger
+                        verbose_proxy_logger.info(f"[DeBERTa Training] Copying baseline model {req.baseline_version_id} to staging...")
+                        self.training_progress = f"Copying baseline model {req.baseline_version_id} to staging..."
+                        for fname in os.listdir(baseline_path):
+                            src_f = os.path.join(baseline_path, fname)
+                            if os.path.isfile(src_f):
+                                shutil.copy(src_f, os.path.join(output_dir, fname))
                 
-                train_deberta_model(
-                    dataset=dataset_dicts,
-                    output_dir=output_dir,
-                    epochs=req.epochs if req.epochs is not None else 3,
-                    learning_rate=req.learning_rate if req.learning_rate is not None else 5e-5,
-                    batch_size=req.batch_size if req.batch_size is not None else 8
+                # ── Free the inference pipeline BEFORE spawning training ─────────
+                from guardrails.deberta_pii_guardrail import active_guardrails
+                from litellm._logging import verbose_proxy_logger
+                verbose_proxy_logger.info(
+                    "[DeBERTa Training] Unloading inference pipeline to free memory for training subprocess..."
                 )
+                for cb in active_guardrails:
+                    cb._model = None
+                import gc
+                import sys
+                import json
+                import subprocess
+                gc.collect()
+
+                if req.use_optuna:
+                    self.training_progress = "Running hyperparameter optimization with Optuna..."
+                else:
+                    self.training_progress = "Executing Hugging Face Trainer fine-tuning loop..."
+                
+                # Save configuration options to a temporary JSON file
+                config_data = {
+                    "dataset": dataset_dicts,
+                    "output_dir": output_dir,
+                    "epochs": req.epochs if req.epochs is not None else 3,
+                    "learning_rate": req.learning_rate if req.learning_rate is not None else 5e-5,
+                    "batch_size": req.batch_size if req.batch_size is not None else 8,
+                    "use_optuna": req.use_optuna if req.use_optuna is not None else False,
+                    "optuna_trials": req.optuna_trials if req.optuna_trials is not None else 3
+                }
+
+                import tempfile
+                fd, temp_config_path = tempfile.mkstemp(suffix=".json", prefix="deberta_train_cfg_")
+                try:
+                    with os.fdopen(fd, 'w', encoding='utf-8') as tmp_f:
+                        json.dump(config_data, tmp_f)
+                    
+                    # Spawn subprocess with LITELLM_TRAINING_ACTIVE=1 environment variable
+                    env = os.environ.copy()
+                    env["LITELLM_TRAINING_ACTIVE"] = "1"
+                    
+                    # Resolve script path
+                    script_path = os.path.abspath(os.path.join(current_dir, "..", "guardrails", "deberta_pii_guardrail.py"))
+                    
+                    # Run subprocess
+                    process_args = [sys.executable, script_path, "--train", temp_config_path]
+                    verbose_proxy_logger.info(f"[DeBERTa Training] Spawning subprocess: {' '.join(process_args)}")
+                    
+                    res = subprocess.run(
+                        process_args,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        check=False
+                    )
+                    
+                    if res.returncode != 0:
+                        raise RuntimeError(
+                            f"Training subprocess failed with exit code {res.returncode}.\n"
+                            f"Stderr: {res.stderr}\nStdout: {res.stdout}"
+                        )
+                finally:
+                    if os.path.exists(temp_config_path):
+                        try:
+                            os.remove(temp_config_path)
+                        except Exception:
+                            pass
                 
                 self.training_progress = "Reloading active model pipelines..."
                 # Reload model in all running instances
                 for cb in active_guardrails:
                     cb.reload_model()
+                
+                # Permanently save new custom labels to configuration file
+                from guardrails.deberta_pii_guardrail import get_custom_model_labels
+                new_custom = get_custom_model_labels()
+                if new_custom:
+                    existing_custom = getattr(self.router, "custom_labels", [])
+                    updated_custom = sorted(list(set(existing_custom + new_custom)))
+                    self.router.custom_labels = updated_custom
+                    self.router.save_pii_guardrail_config()
                     
                 self.training_status = "completed"
                 self.training_progress = "Training successfully completed. Local model active."
@@ -304,10 +437,25 @@ class LiteLLMProxyApp:
             return {"status": "training", "message": "DeBERTa fine-tuning background thread spawned successfully."}
 
         async def execute_status():
+            history = []
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            history_filepath = os.path.abspath(os.path.join(current_dir, "..", "models", "finetuned-deberta", "training_history.json"))
+            try:
+                if os.path.exists(history_filepath):
+                    with open(history_filepath, "r", encoding="utf-8") as f:
+                        history = json.load(f)
+                else:
+                    from litellm._logging import verbose_proxy_logger
+                    verbose_proxy_logger.warning(f"[DeBERTa Status] File does not exist: {history_filepath}")
+            except Exception as e:
+                import traceback
+                from litellm._logging import verbose_proxy_logger
+                verbose_proxy_logger.error(f"[DeBERTa Status] Failed to read training history file: {e}\n{traceback.format_exc()}")
             return {
                 "status": self.training_status,
                 "progress": self.training_progress,
-                "error": self.training_error
+                "error": self.training_error,
+                "history": history
             }
 
         async def execute_reset():
@@ -351,9 +499,191 @@ class LiteLLMProxyApp:
             """Resets the training status to idle (allowed only if not actively training) (API endpoint)."""
             return await execute_reset()
 
+        @self.app.post("/ui/pii-detect")
+        async def ui_pii_detect(request: dict):
+            """Endpoint to run raw PII detection using the active model for UI validation."""
+            text = request.get("text", "")
+            from guardrails.deberta_pii_guardrail import DeBERTaPIIGuardrail, active_guardrails
+            if active_guardrails:
+                guardrail = active_guardrails[0]
+            else:
+                guardrail = DeBERTaPIIGuardrail()
+            cfg = guardrail._get_config({})
+            entities = guardrail.detect(text, cfg)
+            # sort by start ascending
+            entities.sort(key=lambda e: e["start"])
+            return {"entities": entities}
 
+        @self.app.get("/ui/mlops/registry")
+        async def get_mlops_registry():
+            """Returns the list of all saved versions and active version ID."""
+            try:
+                versions = self.registry.get_versions()
+                active_version = self.registry.get_active_version()
+                return {"active_version": active_version, "versions": versions}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
 
+        @self.app.post("/ui/mlops/save")
+        async def save_model_version(request: dict):
+            """Saves current staging model as a new version."""
+            name = request.get("name", "Unnamed Version")
+            description = request.get("description", "")
+            config = request.get("config", {})
+            try:
+                vinfo = self.registry.save_version(name, description, config)
+                return {"status": "success", "version": vinfo}
+            except ValueError as ve:
+                raise HTTPException(status_code=400, detail=str(ve))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/ui/mlops/deploy")
+        async def deploy_model_version(request: dict):
+            """Deploys a specific model version."""
+            version_id = request.get("version_id") # version ID or None (to use default/staging)
+            try:
+                deployed = self.registry.deploy_version(version_id)
+                # Trigger reload of model across active pipelines
+                from guardrails.deberta_pii_guardrail import active_guardrails
+                for cb in active_guardrails:
+                    cb.reload_model()
+                return {"status": "success", "message": f"Successfully deployed {deployed}."}
+            except ValueError as ve:
+                raise HTTPException(status_code=400, detail=str(ve))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/ui/mlops/delete")
+        async def delete_model_version(request: dict):
+            """Deletes a specific model version."""
+            version_id = request.get("version_id")
+            try:
+                self.registry.delete_version(version_id)
+                return {"status": "success", "message": f"Version {version_id} deleted."}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/ui/mlops/evaluate")
+        async def evaluate_model_version(request: dict, background_tasks: BackgroundTasks):
+            """Triggers evaluation on staging or a specific version in background."""
+            version_id = request.get("version_id", "staging")
+            if self.evaluation_status == "running":
+                raise HTTPException(status_code=400, detail="Evaluation is already in progress.")
+            
+            self.evaluation_status = "running"
+            self.evaluation_progress = f"Starting evaluation for {version_id}..."
+            self.evaluation_error = None
+            
+            background_tasks.add_task(self.run_evaluation_in_background, version_id)
+            return {"status": "running", "message": f"Evaluation for {version_id} started."}
+
+        @self.app.get("/ui/mlops/evaluate/status")
+        async def get_evaluation_status():
+            """Returns the current background evaluation status."""
+            return {
+                "status": self.evaluation_status,
+                "progress": self.evaluation_progress,
+                "error": self.evaluation_error
+            }
+
+        @self.app.get("/ui/mlops/report/{version_id}")
+        async def serve_version_report(version_id: str):
+            """Serves the HTML evaluation report for a specific version or staging."""
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            if version_id == "staging":
+                report_path = os.path.abspath(os.path.join(current_dir, "..", "models", "finetuned-deberta", "evaluation_report.html"))
+            else:
+                report_path = os.path.abspath(os.path.join(current_dir, "..", "models", "versions", version_id, "evaluation_report.html"))
                 
+            if not os.path.exists(report_path):
+                raise HTTPException(status_code=404, detail="Evaluation report not found. Run evaluation first.")
+                
+            try:
+                with open(report_path, "r", encoding="utf-8") as f:
+                    return HTMLResponse(content=f.read())
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to load report: {str(e)}")
+
+    def run_evaluation_in_background(self, version_id: str):
+        try:
+            import sys
+            import subprocess
+            import gc
+            import torch
+            
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            # Resolve paths
+            if version_id == "staging":
+                model_path = os.path.abspath(os.path.join(current_dir, "..", "models", "finetuned-deberta"))
+                output_dir = model_path
+            else:
+                model_path = os.path.abspath(os.path.join(current_dir, "..", "models", "versions", version_id))
+                output_dir = model_path
+                
+            if not os.path.exists(os.path.join(model_path, "config.json")) and not os.path.exists(os.path.join(model_path, "adapter_config.json")):
+                raise ValueError(f"Model path {model_path} does not exist or is missing configuration files.")
+                
+            self.evaluation_progress = "Unloading inference pipeline to free memory..."
+            # Unload inference pipeline
+            from guardrails.deberta_pii_guardrail import active_guardrails
+            for cb in active_guardrails:
+                cb._model = None
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+            self.evaluation_progress = "Running model evaluation script..."
+            script_path = os.path.abspath(os.path.join(current_dir, "..", "scripts", "evaluate.py"))
+            
+            process_args = [
+                sys.executable,
+                script_path,
+                "--model_path", model_path,
+                "--output_dir", output_dir
+            ]
+            
+            res = subprocess.run(
+                process_args,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            if res.returncode != 0:
+                raise RuntimeError(f"Evaluation subprocess failed with exit code {res.returncode}.\nStderr: {res.stderr}")
+                
+            self.evaluation_progress = "Parsing evaluation results..."
+            # Read evaluation_data.json from output_dir
+            eval_data_path = os.path.join(output_dir, "evaluation_data.json")
+            if not os.path.exists(eval_data_path):
+                raise RuntimeError("Evaluation script finished but evaluation_data.json was not found.")
+                
+            with open(eval_data_path, "r", encoding="utf-8") as f:
+                eval_data = json.load(f)
+                
+            ft_metrics = eval_data.get("finetuned_metrics", {})
+            macro_metrics = ft_metrics.get("macro", {})
+            
+            # If not staging, update version registry
+            if version_id != "staging":
+                self.registry.update_version_metrics(version_id, macro_metrics)
+                
+            # Reload model across active pipelines
+            for cb in active_guardrails:
+                cb.reload_model()
+                
+            self.evaluation_status = "completed"
+            self.evaluation_progress = "Evaluation successfully completed."
+            
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            self.evaluation_status = "failed"
+            self.evaluation_error = f"{str(e)}\n\n{error_trace}"
+            self.evaluation_progress = "Evaluation failed."
+
     def get_app(self) -> FastAPI:
         """Returns the FastAPI instance (useful for running with ASGI servers)."""
         return self.app

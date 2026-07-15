@@ -5,9 +5,12 @@ import time
 import re
 import yaml
 import json
+import html
+from synthetic_data import SyntheticDataEngine
 from dotenv import load_dotenv
 
-load_dotenv()
+dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(dotenv_path, override=True)
 
 def parse_tagged_text(tagged_text: str) -> dict:
     pattern = r'<([a-zA-Z0-9_\- ]+?)>(.*?)</\1>'
@@ -121,6 +124,10 @@ st.markdown("""
         font-size: 0.9rem;
         line-height: 1.5;
         margin-bottom: 0.75rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 500px;
+        overflow-y: auto;
     }
     
     .diff-original {
@@ -143,9 +150,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Port configuration
-PROXY_PORT = os.environ.get("PORT", "8000")
-PROXY_URL = f"http://127.0.0.1:{PROXY_PORT}"
+# Proxy URL configuration - supports dynamic environment overrides
+PROXY_URL = (
+    os.environ.get("PROXY_URL")
+    or os.environ.get("FASTAPI_URL")
+    or f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
+).rstrip("/")
 
 # Dynamically parse config.yaml models
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.yaml")
@@ -159,14 +169,35 @@ def load_yaml_config():
             pass
     return {}
 
-def load_pii_config():
+# Cached network operations to prevent blocking the Streamlit UI thread
+@st.cache_data(ttl=10)
+def check_backend_health(url):
     try:
-        r = requests.get(f"{PROXY_URL}/ui/pii-config", timeout=2.0)
+        r = requests.get(f"{url}/health", timeout=1.0)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+@st.cache_data(ttl=10)
+def fetch_pii_config(url):
+    try:
+        r = requests.get(f"{url}/ui/pii-config", timeout=1.0)
         if r.status_code == 200:
             return r.json()
     except Exception:
         pass
-    return {"pii_enabled": False, "pii_action": "MASK"}
+    return {"pii_enabled": False, "pii_action": "MASK", "pii_policy": {}}
+
+@st.cache_data(ttl=5)
+def fetch_training_status(url):
+    try:
+        r = requests.get(f"{url}/ui/train-deberta/status", timeout=1.0)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {"status": "idle", "progress": "", "error": None, "history": []}
+
 
 # Dynamically parse config.yaml models and default specs
 config_data = load_yaml_config()
@@ -211,6 +242,12 @@ if "last_result" not in st.session_state:
     st.session_state.last_result = None
 if "cost_limit" not in st.session_state:
     st.session_state.cost_limit = 5.00
+if "training_completion_shown" not in st.session_state:
+    st.session_state.training_completion_shown = True
+if "view_report_id" not in st.session_state:
+    st.session_state.view_report_id = None
+    st.session_state.training_completion_shown = True
+
 if "synthesis_inputs" not in st.session_state:
     st.session_state.synthesis_inputs = [
         {
@@ -230,6 +267,8 @@ else:
         max_id = max(max_id, item["id"])
     if "synthesis_inputs_counter" not in st.session_state:
         st.session_state.synthesis_inputs_counter = max_id + 1
+if "validation_report" not in st.session_state:
+    st.session_state.validation_report = None
 if "training_dataset" not in st.session_state:
     st.session_state.training_dataset = [
         {
@@ -293,16 +332,29 @@ with st.sidebar:
     else:
         st.caption("Custom agent rules dynamically configured across the current execution path.")
 
+    st.markdown("---")
+    st.markdown("<h4 style='font-weight:500; font-size:0.9rem; color:#4B5563;'>Backend Connection</h4>", unsafe_allow_html=True)
+    st.code(PROXY_URL, language=None)
+    
+    is_connected = check_backend_health(PROXY_URL)
+    if is_connected:
+        st.success("✅ API Connected")
+    else:
+        st.warning("⚠️ API Unreachable")
+        st.caption("The backend may be sleeping on Render. If so, it will take ~50s to wake up on the first request.")
+
+
 # ---------------------------------------------------------------------
 # MAIN INTERFACE TABS (Page 1 vs Page 2)
 # ---------------------------------------------------------------------
 st.markdown("<div class='main-header'>LiteLLM Gateway Console & Routing Proxy</div>", unsafe_allow_html=True)
 st.markdown(f"<div class='sub-header'>Minimalist enterprise routing controls configured for <b>{st.session_state.agent_name}</b></div>", unsafe_allow_html=True)
 
-tab_backend, tab_testing, tab_training = st.tabs([
+tab_backend, tab_testing, tab_training, tab_mlops = st.tabs([
     "Page 1: Backend Gateway Controls",
     "Page 2: User Testing Interface",
-    "Page 3: Model Fine-Tuning"
+    "Page 3: Model Fine-Tuning",
+    "Page 4: Model Registry & MLOps"
 ])
 
 # ---------------------------------------------------------------------
@@ -381,7 +433,7 @@ with tab_backend:
         st.markdown("<div class='card-title'>PII Guardrail Controls (DeBERTa-v3)</div>", unsafe_allow_html=True)
         st.write("Apply real-time PII detection and remediation to prompt inputs and model responses.")
         
-        pii_cfg = load_pii_config()
+        pii_cfg = fetch_pii_config(PROXY_URL)
         pii_enabled_default = pii_cfg.get("pii_enabled", False)
         pii_action_default = pii_cfg.get("pii_action", "MASK")
         
@@ -463,6 +515,8 @@ with tab_backend:
         # Helper function to render a dropdown selectbox for a specific label
         def render_policy_select(entity_key):
             entity_label = FRIENDLY_NAMES.get(entity_key, entity_key.replace("_", " ").title())
+            if entity_key not in STANDARD_PII_LABELS and entity_key not in BASIC_KEYS:
+                entity_label = f"{entity_label} [custom added]"
             default_action = pii_policy_default.get(entity_key, pii_action)
             options = ["BLOCK", "MASK", "REWRITE", "IGNORE"]
             selected_action = st.selectbox(
@@ -516,6 +570,7 @@ with tab_backend:
                 r = requests.post(f"{PROXY_URL}/ui/pii-config", json=payload, timeout=5.0)
                 if r.status_code == 200:
                     st.success("PII Guardrail configuration updated successfully.")
+                    st.cache_data.clear()
                     time.sleep(0.5)
                     st.rerun()
                 else:
@@ -534,8 +589,7 @@ with tab_testing:
     # User Input Query
     user_query = st.text_area(
         "Enter Query Prompt to Test",
-        value="I am Samuel, my phone numbers are +1 213 555-0123 and +91 9876534567 , Aadhaar is 9988-7766-5544, SSN: 111-22-3333. my email is sam@gmail.com,  check which all accounts are linked together?  Also my credit card number is 2345 5432 8765 , check my account balance.",
-        height=120
+        value="I am Samuel, my phone numbers are +1 213 555-0123 and +91 9876534567 , Aadhaar is 9988-7766-5544, SSN: 111-22-3333. my email is sam@gmail.com,  check which all accounts are linked together? "
     )
     
     if st.button("Submit Request", type="primary"):
@@ -553,7 +607,7 @@ with tab_testing:
         latency = 0.0
         
         try:
-            r = requests.post(f"{PROXY_URL}/v1/chat/completions", json=payload, timeout=15)
+            r = requests.post(f"{PROXY_URL}/v1/chat/completions", json=payload, timeout=60)
             latency = time.time() - start_time
             if r.status_code == 200:
                 data = r.json()
@@ -572,11 +626,10 @@ with tab_testing:
                 backend_response = f"⚠️ Gateway Error ({r.status_code}): {r.text}"
                 guardrailed_query = None
         except Exception as e:
-            # Fallback mock response for testing disconnected modes
-            latency = 0.045
-            backend_response = f"This is a simulated response from the gateway node running in local sandbox mode."
-            actual_model = f"{st.session_state.model_priorities[0]} (Local Sandbox Simulation)"
-            guardrailed_query = user_query
+            backend_response = f"❌ Connection Error: Could not connect to the LiteLLM Proxy backend. Details: {e}"
+            actual_model = "Unavailable"
+            guardrailed_query = None
+            latency = 0.0
             
         # Save to stateful variables
         st.session_state.last_result = {
@@ -597,7 +650,7 @@ with tab_testing:
         
         with col_prompts:
             st.markdown("<span style='font-size:0.8rem; font-weight:600; color:#374151;'>ORIGINAL QUERY</span>", unsafe_allow_html=True)
-            st.markdown(f"<div class='diff-box diff-original'>{res['query']}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='diff-box diff-original'>{html.escape(res['query'])}</div>", unsafe_allow_html=True)
             
             # Display guardrailed query below original query
             st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
@@ -607,13 +660,13 @@ with tab_testing:
             if g_query is None:
                 st.markdown("<div class='diff-box diff-original' style='border-left-color: #EF4444; background-color: #FEF2F2; color: #EF4444; font-style: italic;'>[BLOCKED - NOT SENT TO LLM]</div>", unsafe_allow_html=True)
             elif g_query == res['query']:
-                st.markdown(f"<div class='diff-box diff-shielded' style='border-left-color: #9CA3AF; background-color: #F9FAFB; color: #4B5563;'>{g_query}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='diff-box diff-shielded' style='border-left-color: #9CA3AF; background-color: #F9FAFB; color: #4B5563;'>{html.escape(g_query)}</div>", unsafe_allow_html=True)
             else:
-                st.markdown(f"<div class='diff-box diff-shielded'>{g_query}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='diff-box diff-shielded'>{html.escape(g_query)}</div>", unsafe_allow_html=True)
             
         with col_response:
             st.markdown("<span style='font-size:0.8rem; font-weight:600; color:#374151;'>GATEWAY RESPONSE</span>", unsafe_allow_html=True)
-            st.markdown(f"<div class='diff-box diff-response' style='min-height:220px;'>{res['response']}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='diff-box diff-response' style='min-height:220px;'>{html.escape(res['response'])}</div>", unsafe_allow_html=True)
             
         # Display professional HUD Metrics
         st.markdown("---")
@@ -671,13 +724,7 @@ with tab_training:
     st.write("Further train the PII token-classification model locally with custom domain-specific data to improve precision and recall.")
     
     # 1. Fetch current training status from backend
-    status_data = {"status": "idle", "progress": "", "error": None}
-    try:
-        r = requests.get(f"{PROXY_URL}/ui/train-deberta/status", timeout=2.0)
-        if r.status_code == 200:
-            status_data = r.json()
-    except Exception as e:
-        st.warning(f"Could not check training status from backend proxy: {e}")
+    status_data = fetch_training_status(PROXY_URL)
         
     current_status = status_data.get("status", "idle")
     current_progress = status_data.get("progress", "")
@@ -711,18 +758,103 @@ with tab_training:
     
     # 3. Handle status-specific display states
     if current_status == "training":
+        st.session_state.training_completion_shown = False
+        st.info("⏳ Fine-tuning model in progress. Please wait...")
+        history = status_data.get("history", [])
+        if history:
+            loss_steps = [log for log in history if "loss" in log]
+            if loss_steps:
+                st.write("📊 **Live Training Loss Curve**")
+                st.line_chart([log["loss"] for log in loss_steps])
+                
+                # Show the latest stats
+                latest_log = loss_steps[-1]
+                col_live1, col_live2, col_live3 = st.columns(3)
+                with col_live1:
+                    st.metric("Current Step", latest_log.get("step", 0))
+                with col_live2:
+                    st.metric("Current Loss", f"{latest_log.get('loss', 0.0):.4f}")
+                with col_live3:
+                    st.metric("Epoch Progress", f"{latest_log.get('epoch', 0.0):.2f}")
+        
         # Poll status in loop using progress indicator
-        st.spinner("Fine-tuning model. Please wait...")
         time.sleep(3.0)
+        st.cache_data.clear() # clear cache to poll status
         st.rerun()
         
     elif current_status == "completed":
-        if st.button("Reset Console Status"):
-            try:
-                requests.post(f"{PROXY_URL}/ui/train-deberta/reset", timeout=2.0)
-                st.rerun()
-            except Exception:
-                pass
+        st.success(
+            "🎉 **Fine-tuning complete!** The DeBERTa PII model has been successfully updated with your custom training data. "
+            "The active gateway proxy pipeline has automatically reloaded with the new weights.",
+            icon="🎉"
+        )
+        if not st.session_state.get("training_completion_shown", False):
+            st.toast("Model fine-tuning completed successfully!", icon="🎉")
+            st.session_state.training_completion_shown = True
+        
+        # Pull history logs to visualize training effects
+        history = status_data.get("history", [])
+        loss_steps = [log for log in history if "loss" in log] if history else []
+        
+        col_m1, col_m2 = st.columns([1.1, 0.9], gap="large")
+        
+        with col_m1:
+            st.markdown("<div class='card-title'>📈 Fine-Tuning Performance & Convergence</div>", unsafe_allow_html=True)
+            if loss_steps:
+                st.write("The chart below displays the loss reduction curve over the training steps:")
+                st.line_chart([log["loss"] for log in loss_steps])
+                
+                # Stats summary
+                final_loss = loss_steps[-1]["loss"]
+                init_loss = loss_steps[0]["loss"]
+                total_steps = len(loss_steps)
+                reduction = ((init_loss - final_loss) / init_loss * 100) if init_loss > 0 else 0.0
+                
+                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                col_st1, col_st2, col_st3 = st.columns(3)
+                with col_st1:
+                    st.metric("Total Steps", total_steps)
+                with col_st2:
+                    st.metric("Final Loss", f"{final_loss:.4f}", f"-{reduction:.1f}%")
+                with col_st3:
+                    # Try to fetch learning rate from last log
+                    final_lr = loss_steps[-1].get("learning_rate", 1e-4)
+                    st.metric("Final Learning Rate", f"{final_lr:.0e}")
+            else:
+                st.info("No training logs are available for the current fine-tuned weights run.")
+                
+        with col_m2:
+            st.markdown("<div class='card-title'>🏷️ Active Model Entity Classifier Head</div>", unsafe_allow_html=True)
+            st.write("All custom PII classes the model has been further trained to recognize locally:")
+            
+            # Fetch config for labels
+            pii_cfg = fetch_pii_config(PROXY_URL)
+            custom_labels = pii_cfg.get("custom_labels", [])
+            
+            if custom_labels:
+                html_badges = []
+                for lbl in custom_labels:
+                    bg_style = "background-color: #F3E8FF; border: 1px solid #C084FC; color: #6B21A8;"
+                    label_text = f"⭐ {lbl.upper()} (CUSTOM)"
+                    html_badges.append(
+                        f'<span style="{bg_style} padding: 4px 10px; border-radius: 9999px; font-weight: 600; font-size: 0.8rem; margin: 4px; display: inline-block;">'
+                        f'{label_text}'
+                        f'</span>'
+                    )
+                st.markdown(f'<div style="line-height: 2.2; margin-top: 10px;">{"".join(html_badges)}</div>', unsafe_allow_html=True)
+            else:
+                st.info("No custom entities trained yet. The model is currently using its pre-trained weights.")
+                
+        st.markdown("<hr style='margin:25px 0; border:0; border-top:1px solid #E5E7EB;'>", unsafe_allow_html=True)
+        col_res1, _ = st.columns([1.5, 3.5])
+        with col_res1:
+            if st.button("🔄 Reset Console Status", type="primary", use_container_width=True):
+                try:
+                    requests.post(f"{PROXY_URL}/ui/train-deberta/reset", timeout=2.0)
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception:
+                    pass
                 
     elif current_status == "failed":
         st.error("Training Traceback Log:")
@@ -730,6 +862,7 @@ with tab_training:
         if st.button("Clear Error & Reset"):
             try:
                 requests.post(f"{PROXY_URL}/ui/train-deberta/reset", timeout=2.0)
+                st.cache_data.clear()
                 st.rerun()
             except Exception:
                 pass
@@ -798,10 +931,10 @@ with tab_training:
         num_samples = st.number_input(
             "Number of Training Samples to Generate",
             min_value=10,
-            max_value=100,
-            value=30,
-            step=5,
-            help="Recommended: 30. Setting it to 30 ensures enough variety for stable DeBERTa gradient updates without creating bias or hitting API timeout limits."
+            max_value=5000,
+            value=50,
+            step=10,
+            help="No more timeouts! The new Diversity-Driven engine runs iteratively one-by-one, enabling generation of large datasets (up to 5000+ samples) completely safely."
         )
 
         st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
@@ -816,103 +949,138 @@ with tab_training:
                     break
                     
             if valid_inputs:
-                with st.spinner("Synthesizing balanced dataset via LLM proxy..."):
-                    # Construct domain and target label instructions for all definitions
-                    defs_instruction = ""
-                    allowed_labels = ["person", "email address", "phone number", "address", "credit card number", "social security number", "passport number", "bank account number", "password", "api key"]
+                # Retrieve target labels
+                allowed_labels = ["person", "email address", "phone number", "address", "credit card number", "social security number", "passport number", "bank account number", "password", "api key"]
+                for item in st.session_state.synthesis_inputs:
+                    lbl = item["target_label"].strip().lower()
+                    if lbl not in allowed_labels:
+                        allowed_labels.append(lbl)
+                
+                # Import and execute our Diversity-Driven Synthetic Data Engine
+                try:
+                    from synthetic_data import SyntheticDataEngine
+                    engine = SyntheticDataEngine()
                     
-                    for idx, item in enumerate(st.session_state.synthesis_inputs):
-                        df = item["data_format"].strip()
-                        tl = item["target_label"].strip()
-                        pt = item["pattern_val"].strip()
-                        allowed_labels.append(tl)
-                        
-                        pt_clause = ""
-                        if pt:
-                            pt_clause = f" where values for '<{tl}>' must follow the format/pattern style of: '{pt}'"
-                        
-                        defs_instruction += (
-                            f"Definition #{idx + 1}:\n"
-                            f"- Domain Context/Data Format: '{df}'\n"
-                            f"- Target PII Label: '{tl}'{pt_clause}\n\n"
+                    progress_bar = st.progress(0.0)
+                    status_text = st.empty()
+                    
+                    def update_progress(current, total, stats):
+                        pct = current / total
+                        progress_bar.progress(pct)
+                        healed = stats.get("healed_entities", 0)
+                        attempts = stats.get("total_attempts", 0)
+                        status_text.markdown(
+                            f"🤖 **Generating sample {current}/{total}...** (Attempts: {attempts} | Auto-healed Spans: {healed})"
                         )
                     
-                    num_target = int(num_samples * 0.35)
-                    num_standard = int(num_samples * 0.35)
-                    num_neutral = num_samples - (2 * num_target)
+                    model_to_use = st.session_state.model_priorities[0] if st.session_state.model_priorities else "groq/llama-3.1-8b-instant"
                     
-                    system_prompt = "You are a specialized data synthesizer for PII NER models. You only return valid raw JSON arrays of strings."
-                    prompt = (
-                        f"You must generate a training dataset of exactly {num_samples} diverse and realistic text samples.\n"
-                        f"The text samples must be generated based on the following custom PII and domain definitions:\n\n"
-                        f"{defs_instruction}"
-                        f"IMPORTANT: Each generated sample must strictly match and be formatted in the layout and style of the corresponding user-requested Data Format / Domain Context (e.g. if the format is 'Medical Billing Invoice', write the sample text exactly like a medical invoice). If multiple definitions are provided, distribute the {num_samples} samples evenly across the specified Data Formats.\n\n"
-                        f"To match the pre-trained DeBERTa model's distribution and prevent overfitting or label bias, you MUST balance the instances across the {num_samples} generated texts as follows:\n"
-                        f"1. Exactly {num_target} of the samples must contain at least one of the custom target PII labels (using the actual user-defined target label names as the tag names, for example, if the target label is 'patient id', write: '<patient id>value</patient id>'), often alongside other standard PII categories (e.g. '<person>Arthur</person>', '<email address>test@email.com</email address>') to simulate realistic co-occurrence.\n"
-                        f"2. Exactly {num_standard} of the samples must contain ONLY standard pre-trained PII categories (like '<person>Arthur</person>', '<email address>test@email.com</email address>', '<phone number>+12345678</phone number>') and NOT contain any of the custom target labels.\n"
-                        f"3. Exactly {num_neutral} of the samples must be neutral texts containing NO PII entities at all.\n\n"
-                        f"Use XML-like tags to annotate entities directly in the text using the exact label name as the XML tag (e.g., '<person>name</person>' or '<patient id>value</patient id>'). Never use the literal word 'label' as a tag name.\n"
-                        f"Use ONLY the following labels for annotation: {', '.join(sorted(set(allowed_labels)))}.\n\n"
-                        f"Return the response ONLY as a valid JSON list of strings (no markdown tags, no formatting, just the raw JSON list of strings)."
-                    )
-                    
-                    # Dynamically adjust max_tokens based on number of samples (roughly 100 tokens per sample)
-                    max_tokens_val = min(4000, max(1000, num_samples * 100))
-                    
-                    payload = {
-                        "model": st.session_state.model_priorities[0] if st.session_state.model_priorities else "groq/llama-3.1-8b-instant",
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "temperature": 0.5,
-                        "max_tokens": max_tokens_val,
-                        "bypass_guardrails": True
-                    }
-                    
-                    try:
-                        r = requests.post(f"{PROXY_URL}/v1/chat/completions", json=payload, timeout=45.0)
-                        if r.status_code == 200:
-                            resp_json = r.json()
-                            content = resp_json["choices"][0]["message"]["content"].strip()
-                            
-                            # Clean markdown formatting if LLM included it
-                            if content.startswith("```"):
-                                content = re.sub(r"^```(?:json)?\n?", "", content)
-                                content = re.sub(r"\n?```$", "", content)
-                            content = content.strip()
-                            
-                            try:
-                                tagged_texts = json.loads(content)
-                                if not isinstance(tagged_texts, list):
-                                    st.error("Generated response was not a JSON list of strings. Raw output:\n" + content)
-                                else:
-                                    parsed_dataset = []
-                                    for t in tagged_texts[:num_samples]:
-                                        parsed_sample = parse_tagged_text(t)
-                                        parsed_dataset.append(parsed_sample)
-                                    
-                                    st.session_state.training_dataset = parsed_dataset
-                                    st.success(f"Synthesized {len(parsed_dataset)} balanced dataset samples successfully!")
-                                    st.rerun()
-                            except Exception as pe:
-                                st.error(f"Failed to parse generated JSON: {pe}. Raw output:\n{content}")
-                        else:
-                            st.error(f"LLM synthesis failed: {r.status_code} - {r.text}")
-                    except Exception as e:
-                        st.error(f"Could not connect to LiteLLM Proxy: {e}")
+                    # Run generation
+                    with st.spinner("Executing Diversity-Driven Synthetic Data Engine..."):
+                        dataset = engine.generate_dataset(
+                            num_samples=int(num_samples),
+                            target_labels=allowed_labels,
+                            model=model_to_use,
+                            progress_callback=update_progress,
+                            synthesis_inputs=st.session_state.synthesis_inputs
+                        )
+                        
+                    if len(dataset) > 0:
+                        st.session_state.training_dataset = dataset
+                        st.session_state.validation_report = getattr(dataset, "report", None)
+                        st.success(f"Synthesized {len(dataset)} balanced, diversity-driven training samples successfully!")
+                        st.balloons()
+                        time.sleep(1.0)
+                        st.rerun()
+                    else:
+                        st.error("No samples were successfully generated. Please check model and API configurations.")
+                except Exception as ex:
+                    st.error(f"Generation Engine failed: {ex}")
 
         st.markdown("<hr style='margin:20px 0; border:0; border-top:1px solid #E5E7EB;'>", unsafe_allow_html=True)
 
-        # Hidden training hyperparameters (pre-configured to optimal defaults for DeBERTa SFT)
-        epochs = 15
-        learning_rate = 1e-4
-        batch_size = 8
+        # Training Hyperparameters
+        st.markdown("<div class='card-title'>Training Hyperparameters</div>", unsafe_allow_html=True)
+        st.write("Configure the fine-tuning run parameters before submitting the training job.")
+
+        col_hp1, col_hp2, col_hp3 = st.columns(3)
+        with col_hp1:
+            epochs = st.number_input(
+                "Epochs",
+                min_value=1,
+                max_value=100,
+                value=15,
+                step=1,
+                help="Number of full passes through the training dataset. More epochs = longer training but better fit. Recommended: 10–20."
+            )
+        with col_hp2:
+            learning_rate = st.select_slider(
+                "Learning Rate",
+                options=[1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3],
+                value=1e-4,
+                format_func=lambda x: f"{x:.0e}",
+                help="Step size for gradient updates. Lower = slower but more stable. Recommended: 1e-4 for fine-tuning DeBERTa."
+            )
+        with col_hp3:
+            batch_size = st.number_input(
+                "Batch Size",
+                min_value=1,
+                max_value=64,
+                value=8,
+                step=1,
+                help="Number of samples processed per gradient step. Larger = faster but uses more memory. Recommended: 8."
+            )
+
+        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+        col_info1, col_info2, col_info3 = st.columns(3)
+        with col_info1:
+            st.caption(f"📅 **{epochs}** training epoch{'s' if epochs != 1 else ''}")
+        with col_info2:
+            st.caption(f"📉 Learning rate: **{learning_rate:.0e}**")
+        with col_info3:
+            st.caption(f"📦 Batch size: **{batch_size}** samples/step")
+
+        st.markdown("<div style='height:15px;'></div>", unsafe_allow_html=True)
+        st.markdown("<span style='font-size:0.85rem; font-weight:600; color:#374151;'>Hyperparameter Tuning (Optuna)</span>", unsafe_allow_html=True)
+        col_optuna_enable, col_optuna_trials = st.columns([1, 2])
+        with col_optuna_enable:
+            use_optuna = st.checkbox(
+                "Enable Optuna Tuning",
+                value=False,
+                help="Search for the best learning rate, batch size, and epochs automatically before training. This can improve model performance."
+            )
+        with col_optuna_trials:
+            optuna_trials = st.slider(
+                "Number of Search Trials",
+                min_value=1,
+                max_value=10,
+                value=3,
+                step=1,
+                disabled=not use_optuna,
+                help="Recommended: 3. Higher numbers search more combinations but take longer."
+            )
+
+        if use_optuna:
+            st.info(f"🔍 Optuna tuning is enabled. Epochs, Learning Rate, and Batch Size inputs above will be overridden by the best parameters discovered during the {optuna_trials} search trials.")
 
         # 3. Input Training Dataset
         st.markdown("<div class='card-title'>Input Training Dataset (JSON Format)</div>", unsafe_allow_html=True)
         st.write("Define text training samples and label offsets for NER Token Classification. Matches canonical labels.")
         
+        if st.session_state.get("validation_report"):
+            rep = st.session_state.validation_report
+            st.markdown(f"""
+            <div class='card' style='background-color:#F0FDF4; padding:12px; border-radius:6px; margin-bottom:12px; border:1px solid #BBF7D0;'>
+                <span style='font-size:0.9rem; font-weight:600; color:#166534;'>📊 Generation Validation Report</span>
+                <div style='display:flex; justify-content:space-between; margin-top:8px; font-size:0.85rem; color:#14532D;'>
+                    <div><b>Valid Samples</b>: {rep.get('sample_counts', 0)}</div>
+                    <div><b>Dropped</b>: {rep.get('dropped_count', 0)}</div>
+                    <div><b>Hard Negatives</b>: {rep.get('hard_negatives_count', 0)} ({rep.get('percent_hard_negatives', 0.0):.1f}%)</div>
+                    <div><b>Near-Dup Rate</b>: {rep.get('near_dup_rate', 0.0)*100:.1f}%</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         dataset_json = st.text_area(
             "Training Dataset JSON",
             value=json.dumps(st.session_state.training_dataset, indent=2),
@@ -973,11 +1141,15 @@ with tab_training:
                             "dataset": parsed_dataset,
                             "epochs": int(epochs),
                             "learning_rate": float(learning_rate),
-                            "batch_size": int(batch_size)
+                            "batch_size": int(batch_size),
+                            "use_optuna": bool(use_optuna),
+                            "optuna_trials": int(optuna_trials)
                         }
                         r = requests.post(f"{PROXY_URL}/ui/train-deberta", json=payload, timeout=5.0)
                         if r.status_code == 200:
                             st.success("Training task submitted successfully. Starting background threads...")
+                            st.session_state.training_completion_shown = False
+                            st.cache_data.clear()
                             time.sleep(0.5)
                             st.rerun()
                         else:
@@ -986,4 +1158,251 @@ with tab_training:
                 st.error(f"Invalid JSON Syntax: {je}")
             except Exception as e:
                 st.error(f"Submission failed: {e}")
+
+
+# ---------------------------------------------------------------------
+# PAGE 4: MODEL REGISTRY & MLOPS
+# ---------------------------------------------------------------------
+with tab_mlops:
+    st.markdown("<div class='card-title'>MLOps Model Version Control Registry</div>", unsafe_allow_html=True)
+    st.write("Track, evaluate, and deploy fine-tuned DeBERTa model versions. Switch between versions dynamically.")
+    
+    # 1. Fetch registry state from backend
+    registry_data = {"active_version": None, "versions": []}
+    try:
+        r = requests.get(f"{PROXY_URL}/ui/mlops/registry", timeout=2.0)
+        if r.status_code == 200:
+            registry_data = r.json()
+    except Exception as e:
+        st.error(f"Failed to connect to model registry: {e}")
+        
+    active_version = registry_data.get("active_version")
+    versions = registry_data.get("versions", [])
+    
+    # Let's check background evaluation status
+    eval_status = {"status": "idle", "progress": "", "error": None}
+    try:
+        r_eval = requests.get(f"{PROXY_URL}/ui/mlops/evaluate/status", timeout=1.0)
+        if r_eval.status_code == 200:
+            eval_status = r_eval.json()
+    except Exception:
+        pass
+        
+    if eval_status["status"] == "running":
+        st.info(f"⏳ **Model Evaluation in Progress**: {eval_status['progress']}")
+        time.sleep(2.0)
+        st.cache_data.clear()
+        st.rerun()
+    elif eval_status["status"] == "completed":
+        st.success("🎉 Evaluation completed successfully!")
+        if st.button("Clear Evaluation Notification"):
+            st.rerun()
+    elif eval_status["status"] == "failed":
+        st.error(f"❌ Evaluation failed: {eval_status['error']}")
+        
+    # Active Model HUD Card
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    col_hud1, col_hud2, col_hud3 = st.columns(3)
+    with col_hud1:
+        st.markdown("<span class='metadata-label'>Active Model Deploy Status</span>", unsafe_allow_html=True)
+        if active_version:
+            st.markdown(f"<h3 style='color:#10B981; margin-top:5px; font-weight:600;'>{active_version}</h3>", unsafe_allow_html=True)
+        else:
+            st.markdown("<h3 style='color:#4B5563; margin-top:5px; font-weight:600;'>Base Model / Staging</h3>", unsafe_allow_html=True)
+    with col_hud2:
+        st.markdown("<span class='metadata-label'>Registry Saved Count</span>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:#3B82F6; margin-top:5px; font-weight:600;'>{len(versions)}</h3>", unsafe_allow_html=True)
+    with col_hud3:
+        st.markdown("<span class='metadata-label'>PII Guardrail Status</span>", unsafe_allow_html=True)
+        is_pii_enabled = fetch_pii_config(PROXY_URL).get("pii_enabled", False)
+        if is_pii_enabled:
+            st.markdown("<h3 style='color:#10B981; margin-top:5px; font-weight:600;'>🛡️ ACTIVE</h3>", unsafe_allow_html=True)
+        else:
+            st.markdown("<h3 style='color:#EF4444; margin-top:5px; font-weight:600;'>⚠️ DISABLED</h3>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Staging Model Section
+    st.markdown("<h4 style='font-weight:600; color:#111827;'>Staging Model (Staged Training Weights)</h4>", unsafe_allow_html=True)
+    st.caption("This is the directory containing the latest fine-tuning weights before saving them to the registry.")
+    
+    # Verify if staging model has config.json
+    staging_exists = False
+    try:
+        r_stage = requests.get(f"{PROXY_URL}/ui/mlops/report/staging", timeout=1.0)
+        staging_exists = (r_stage.status_code != 404)
+    except Exception:
+        pass
+        
+    if staging_exists or current_status == "completed":
+        st.markdown("<div class='card' style='background-color: #F8FAFC;'>", unsafe_allow_html=True)
+        st.markdown("<span style='font-size:0.9rem; font-weight:600; color:#4B5563;'>Staged Model in models/finetuned-deberta</span>", unsafe_allow_html=True)
+        
+        col_st_act1, col_st_act2, col_st_act3 = st.columns(3)
+        with col_st_act1:
+            if st.button("📊 Evaluate Staging", use_container_width=True):
+                r = requests.post(f"{PROXY_URL}/ui/mlops/evaluate", json={"version_id": "staging"}, timeout=3.0)
+                if r.status_code == 200:
+                    st.success("Staging model evaluation started.")
+                    st.rerun()
+                else:
+                    st.error(f"Failed to evaluate: {r.text}")
+        with col_st_act2:
+            if st.button("🚀 Deploy Staging (Staging Mode)", use_container_width=True):
+                r = requests.post(f"{PROXY_URL}/ui/mlops/deploy", json={"version_id": None}, timeout=3.0)
+                if r.status_code == 200:
+                    st.success("Deployed staging model.")
+                    st.rerun()
+                else:
+                    st.error(f"Failed to deploy: {r.text}")
+        with col_st_act3:
+            # Check if report exists
+            has_report = False
+            try:
+                r_rep = requests.get(f"{PROXY_URL}/ui/mlops/report/staging", timeout=1.0)
+                has_report = (r_rep.status_code == 200)
+            except Exception:
+                pass
+            if has_report:
+                if st.button("📄 View Staging Report", use_container_width=True):
+                    st.session_state.view_report_id = "staging"
+            else:
+                st.button("📄 View Staging Report", disabled=True, use_container_width=True)
+                
+        # Form to save staging to registry
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        with st.form("save_to_registry_form"):
+            st.markdown("<span style='font-size: 0.8rem; font-weight: 600; color: #4B5563;'>Save Staging model to Registry</span>", unsafe_allow_html=True)
+            v_name = st.text_input("Version Tag Name", placeholder="e.g. Finance V1")
+            v_desc = st.text_area("Version Description", placeholder="Trained with 100 invoice samples to detect client accounts.")
+            
+            # Extract dataset size from app.py state if available
+            dataset_size = len(st.session_state.training_dataset)
+            
+            submit_save = st.form_submit_button("💾 Save Model to Registry", use_container_width=True)
+            if submit_save:
+                if not v_name.strip():
+                    st.error("Version Tag Name is required.")
+                else:
+                    payload = {
+                        "name": v_name,
+                        "description": v_desc,
+                        "config": {
+                            "epochs": int(epochs) if "epochs" in locals() else 15,
+                            "learning_rate": float(learning_rate) if "learning_rate" in locals() else 1e-4,
+                            "batch_size": int(batch_size) if "batch_size" in locals() else 8,
+                            "dataset_size": dataset_size
+                        }
+                    }
+                    r = requests.post(f"{PROXY_URL}/ui/mlops/save", json=payload, timeout=5.0)
+                    if r.status_code == 200:
+                        st.success("Model version saved successfully to registry!")
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to save version: {r.text}")
+        st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.info("No staging model weights exist. Go to Tab 3: Model Fine-Tuning to run a training loop first.")
+
+    st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+    st.markdown("<h4 style='font-weight:600; color:#111827;'>Saved Model Registry & Version Control</h4>", unsafe_allow_html=True)
+    
+    if len(versions) == 0:
+        st.info("No versions saved in registry yet.")
+    else:
+        for idx, ver in enumerate(versions):
+            vid = ver["id"]
+            vname = ver["name"]
+            vdesc = ver["description"]
+            created = ver["created_at"]
+            status = ver["status"]
+            vmetrics = ver.get("metrics")
+            
+            # Format display card
+            is_active = (status == "active")
+            card_border = "2px solid #10B981" if is_active else "1px solid #E5E7EB"
+            bg_color = "#F0FDF4" if is_active else "#FFFFFF"
+            
+            st.markdown(f"""
+            <div style="border: {card_border}; border-radius: 8px; padding: 1.25rem; background-color: {bg_color}; margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span style="font-size: 1.1rem; font-weight: 600; color: #111827;">{vname} <span style="font-size: 0.8rem; color:#6B7280; font-weight:400;">({vid})</span></span>
+                    {"<span style='background-color: #D1FAE5; color: #065F46; padding: 3px 10px; border-radius: 9999px; font-weight: 600; font-size: 0.75rem;'>ACTIVE/DEPLOYED</span>" if is_active else "<span style='background-color: #F3F4F6; color: #374151; padding: 3px 10px; border-radius: 9999px; font-weight: 500; font-size: 0.75rem;'>INACTIVE</span>"}
+                </div>
+                <div style="color: #4B5563; font-size: 0.9rem; margin-bottom: 12px;">{vdesc}</div>
+                <div style="display: flex; gap: 20px; font-size: 0.8rem; color: #6B7280; margin-bottom: 15px;">
+                    <div>📅 Created: <b>{created}</b></div>
+                    <div>📦 Configs: Epochs=<b>{ver.get('epochs')}</b>, LR=<b>{ver.get('learning_rate')}</b>, Batch=<b>{ver.get('batch_size')}</b></div>
+                    <div>📊 Dataset size: <b>{ver.get('dataset_size')} samples</b></div>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # Display metrics if evaluated
+            if vmetrics and isinstance(vmetrics, dict):
+                col_met1, col_met2, col_met3 = st.columns(3)
+                with col_met1:
+                    st.metric("Macro F1", f"{vmetrics.get('f1', 0.0):.3f}")
+                with col_met2:
+                    st.metric("Precision", f"{vmetrics.get('precision', 0.0):.3f}")
+                with col_met3:
+                    st.metric("Recall", f"{vmetrics.get('recall', 0.0):.3f}")
+            else:
+                st.warning("⚠️ This version has not been evaluated on the held-out test set yet.")
+                
+            # Actions buttons for this version
+            col_vact1, col_vact2, col_vact3, col_vact4 = st.columns(4)
+            with col_vact1:
+                if is_active:
+                    st.button("🚀 Deployed", disabled=True, key=f"dep_btn_dis_{vid}", use_container_width=True)
+                else:
+                    if st.button("🚀 Deploy", key=f"dep_btn_{vid}", use_container_width=True):
+                        r = requests.post(f"{PROXY_URL}/ui/mlops/deploy", json={"version_id": vid}, timeout=3.0)
+                        if r.status_code == 200:
+                            st.success(f"Version {vname} deployed!")
+                            st.rerun()
+                        else:
+                            st.error(f"Failed to deploy: {r.text}")
+            with col_vact2:
+                if st.button("📊 Evaluate", key=f"eval_btn_{vid}", use_container_width=True):
+                    r = requests.post(f"{PROXY_URL}/ui/mlops/evaluate", json={"version_id": vid}, timeout=3.0)
+                    if r.status_code == 200:
+                        st.success(f"Evaluation started for {vname}.")
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to evaluate: {r.text}")
+            with col_vact3:
+                # Check if report exists
+                has_report = False
+                try:
+                    r_rep = requests.get(f"{PROXY_URL}/ui/mlops/report/{vid}", timeout=1.0)
+                    has_report = (r_rep.status_code == 200)
+                except Exception:
+                    pass
+                if has_report:
+                    if st.button("📄 View Report", key=f"view_rep_{vid}", use_container_width=True):
+                        st.session_state.view_report_id = vid
+                        st.rerun()
+                else:
+                    st.button("📄 View Report", key=f"view_rep_dis_{vid}", disabled=True, use_container_width=True)
+            with col_vact4:
+                if st.button("🗑️ Delete", key=f"del_btn_{vid}", use_container_width=True):
+                    r = requests.post(f"{PROXY_URL}/ui/mlops/delete", json={"version_id": vid}, timeout=3.0)
+                    if r.status_code == 200:
+                        st.success(f"Version {vname} deleted.")
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to delete: {r.text}")
+                        
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+    # Iframe rendering if a report has been selected for viewing
+    if st.session_state.get("view_report_id"):
+        view_id = st.session_state.view_report_id
+        st.markdown("<hr style='margin:30px 0; border:0; border-top:1px solid #E5E7EB;'>", unsafe_allow_html=True)
+        st.markdown(f"### 📄 Evaluation Report Viewer: {view_id}")
+        if st.button("❌ Close Report Viewer"):
+            st.session_state.view_report_id = None
+            st.rerun()
+            
+        report_url = f"{PROXY_URL}/ui/mlops/report/{view_id}"
+        st.components.v1.iframe(report_url, height=800, scrolling=True)
 

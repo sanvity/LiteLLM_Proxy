@@ -1,0 +1,56 @@
+y[
+  {
+    "domain": "Banking",
+    "style": "Standard Sentence / All-caps",
+    "text": "SARAH SHAH IS A VALUABLE CUSTOMER OF OUR BANK.",
+    "entities": [
+      {
+        "label": "NAME",
+        "start": 0,
+        "end": 10
+      }
+    ]
+  },
+  {
+    "domain": "Healthcare",
+    "style": "CSV-like / Abbreviated",
+    "text": "Dr. Brandon Maldonado performed surgery on a patient with a fractured femur today.",
+    "entities": [
+      {
+        "label": "NAME",
+        "start": 4,
+        "end": 21
+      }
+    ]
+  },
+  {
+    "domain": "HR",
+    "style": "Standard Sentence / Slang/Informal",
+    "text": "Please submit your W-2 form with your social security number 205-46-6667 so we can process your tax-related documents.",
+    "entities": [
+      {
+        "label": "SSN",
+        "start": 61,
+        "end": 72
+      }
+    ]
+  },
+  {
+    "domain": "Travel",
+    "style": "Query String / Abbreviated",
+    "text": "I'd like to book a flight to Chicago for my 62nd birthday on January 15th, and I'd like to pay with my SSN 415-95-1676.",
+    "entities": [
+      {
+        "label": "SSN",
+        "start": 107,
+        "end": 118
+      }
+    ]
+  },
+  {
+    "domain": "E-commerce",
+    "style": "Fragmented List / Typo-heavy",
+    "text": "The order #ORDR-1234 is for custoemer John Doe, with address 123 Fake St, Anytown USA, on DATE: 2026-06-30T10:25:05Z. He ordered a total of 3 items for a grand total of $123.45.",
+    "entities": []
+  }
+]

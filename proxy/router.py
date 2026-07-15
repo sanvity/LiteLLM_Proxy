@@ -82,10 +82,24 @@ class LiteLLMProxyRouter:
         self.guardrail_instances = {}
 
         # PII Guardrail state parameters
-        self.pii_enabled = True
-        self.pii_action = "MASK"
-        self.pii_policy = None
         self.pii_guardrail = None
+        self.load_pii_guardrail_config()
+        if self.pii_enabled:
+            logger.info("Pre-warming DeBERTa PII model in background thread...")
+            threading.Thread(target=lambda: self._get_pii_guardrail().model, daemon=True).start()
+
+        # Content Safety Guardrail state (jailbreak / toxicity / prompt injection)
+        self.safety_enabled = {
+            "jailbreak": False,
+            "toxicity": False,
+            "prompt_injection": False,
+        }
+        self.safety_action = {
+            "jailbreak": "BLOCK",
+            "toxicity": "BLOCK",
+            "prompt_injection": "BLOCK",
+        }
+        self.load_safety_guardrail_config()
 
         # Priority Preference Routing State Parameters
         self.preference_enabled = False
@@ -108,6 +122,70 @@ class LiteLLMProxyRouter:
         }
 
         self.log_event("Class-based LiteLLM Proxy online. Load balancer initialized.", "routing")
+
+    def load_pii_guardrail_config(self):
+        import os
+        import json
+        config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config"))
+        os.makedirs(config_dir, exist_ok=True)
+        config_path = os.path.join(config_dir, "pii_guardrail_config.json")
+        self.pii_enabled = False
+        self.pii_action = "MASK"
+        self.pii_policy = None
+        self.custom_labels = []
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.pii_enabled = data.get("pii_enabled", False)
+                    self.pii_action = data.get("pii_action", "MASK")
+                    self.pii_policy = data.get("pii_policy", None)
+                    self.custom_labels = data.get("custom_labels", [])
+            except Exception as e:
+                logger.error(f"Failed to load pii_guardrail_config.json: {e}")
+
+    def save_pii_guardrail_config(self):
+        import os
+        import json
+        config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config"))
+        os.makedirs(config_dir, exist_ok=True)
+        config_path = os.path.join(config_dir, "pii_guardrail_config.json")
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "pii_enabled": self.pii_enabled,
+                    "pii_action": self.pii_action,
+                    "pii_policy": self.pii_policy,
+                    "custom_labels": getattr(self, "custom_labels", [])
+                }, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save pii_guardrail_config.json: {e}")
+
+    def load_safety_guardrail_config(self):
+        import os, json
+        config_path = os.path.join(
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config")),
+            "safety_guardrail_config.json"
+        )
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.safety_enabled = data.get("enabled", self.safety_enabled)
+                self.safety_action = data.get("action", self.safety_action)
+            except Exception as e:
+                logger.error(f"Failed to load safety_guardrail_config.json: {e}")
+
+    def save_safety_guardrail_config(self):
+        import os, json
+        config_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config"))
+        os.makedirs(config_dir, exist_ok=True)
+        config_path = os.path.join(config_dir, "safety_guardrail_config.json")
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump({"enabled": self.safety_enabled, "action": self.safety_action}, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save safety_guardrail_config.json: {e}")
 
     def log_event(self, message: str, type: str = "routing"):
         """Logs an event and pushes it to a thread-safe rolling buffer for the telemetry UI."""
@@ -154,8 +232,12 @@ class LiteLLMProxyRouter:
                 return response
                 
             guardrail = self._get_pii_guardrail()
-            from guardrails.deberta_pii_guardrail import _Config, SERVER_DEFAULT_POLICY, SERVER_OLLAMA_MODEL
-            policy = self.pii_policy if self.pii_policy is not None else {k: self.pii_action for k in SERVER_DEFAULT_POLICY.keys()}
+            from guardrails.deberta_pii_guardrail import _Config, SERVER_DEFAULT_POLICY, SERVER_OLLAMA_MODEL, get_custom_labels_set
+            if self.pii_policy is not None:
+                policy = self.pii_policy
+            else:
+                custom_lbls = [lbl.lower().replace("_", " ") for lbl in get_custom_labels_set()]
+                policy = {k: self.pii_action for k in set(list(SERVER_DEFAULT_POLICY.keys()) + custom_lbls)}
             cfg = _Config(
                 policy=policy,
                 default_action=self.pii_action,
@@ -346,8 +428,12 @@ class LiteLLMProxyRouter:
         bypass_guardrails = kwargs.get("bypass_guardrails", False)
         if self.pii_enabled and not bypass_guardrails:
             guardrail = self._get_pii_guardrail()
-            from guardrails.deberta_pii_guardrail import _Config, SERVER_DEFAULT_POLICY, SERVER_OLLAMA_MODEL
-            policy = self.pii_policy if self.pii_policy is not None else {k: self.pii_action for k in SERVER_DEFAULT_POLICY.keys()}
+            from guardrails.deberta_pii_guardrail import _Config, SERVER_DEFAULT_POLICY, SERVER_OLLAMA_MODEL, get_custom_labels_set
+            if self.pii_policy is not None:
+                policy = self.pii_policy
+            else:
+                custom_lbls = [lbl.lower().replace("_", " ") for lbl in get_custom_labels_set()]
+                policy = {k: self.pii_action for k in set(list(SERVER_DEFAULT_POLICY.keys()) + custom_lbls)}
             cfg = _Config(
                 policy=policy,
                 default_action=self.pii_action,
@@ -371,7 +457,24 @@ class LiteLLMProxyRouter:
                         self.log_event(f"[PII Guardrail] Pre-call sanitized input role={msg.get('role')}.", "warning")
         else:
             sanitized_messages = messages
-        
+
+        # ── Content Safety Guardrails (jailbreak / toxicity / prompt injection) ──
+        if any(self.safety_enabled.values()) and not bypass_guardrails:
+            from guardrails.safety_guardrails import check_all
+            for msg in sanitized_messages:
+                content = msg.get("content")
+                if isinstance(content, str) and msg.get("role") == "user":
+                    should_block, guard_name, reason = check_all(
+                        content, self.safety_enabled, self.safety_action
+                    )
+                    if reason:  # guardrail fired
+                        self.log_event(
+                            f"[Safety Guardrail:{guard_name}] {('BLOCKED' if should_block else 'LOGGED')}: {reason}",
+                            "warning"
+                        )
+                        if should_block:
+                            raise ValueError(f"Request blocked by {guard_name} guardrail: {reason}")
+
         # Extract the post-guardrail user query
         user_msgs = [m for m in sanitized_messages if m.get("role") == "user"]
         guardrailed_query = user_msgs[-1]["content"] if user_msgs else None
@@ -508,8 +611,26 @@ class LiteLLMProxyRouter:
             if all_eps:
                 max_tpr = max(e.tpr for e in all_eps)
                 best_eps = [e for e in all_eps if e.tpr == max_tpr]
-                backup_eps = [e for e in best_eps if e.model_name == "backup-cluster"]
-                selected_endpoint = backup_eps[0] if backup_eps else best_eps[0]
+                
+                # Apply complexity-aware and cost-aware selection on the highest capacity nodes
+                def get_relaxation_suitability_score(ep):
+                    tier_map = {"low": 1, "medium": 2, "high": 3}
+                    p_tier = tier_map.get(complexity, 2)
+                    ep_tier = tier_map.get(ep.complexity_tier, 2)
+                    
+                    tier_mismatch = abs(p_tier - ep_tier)
+                    if complexity == "high" and ep.complexity_tier == "low":
+                        tier_mismatch += 5.0
+                    if complexity == "low" and ep.complexity_tier == "high":
+                        tier_mismatch += 5.0
+                        
+                    # Prioritize backup cluster models since this is an escalation fallback
+                    is_backup = (ep.model_name == "backup-cluster")
+                    backup_priority = 0 if is_backup else 1
+                    
+                    return (backup_priority, tier_mismatch, ep.cost_per_million)
+                
+                selected_endpoint = min(best_eps, key=get_relaxation_suitability_score)
                 selected_cluster = selected_endpoint.model_name
                 if selected_cluster != model:
                     is_fallback_triggered = True
@@ -550,7 +671,7 @@ class LiteLLMProxyRouter:
 
             # We pass the selected target cluster to the LiteLLM Router so it uses its config
             # and automatically selects the active backend under that cluster!
-            response = self.router.completion(
+            response = await self.router.acompletion(
                 model=selected_cluster,
                 messages=sanitized_messages,
                 **litellm_kwargs
@@ -589,7 +710,7 @@ class LiteLLMProxyRouter:
                 try:
                     self.log_event(f"[Intra-Cluster Failover] Cascading to alternate backend '{alt_ep.model}' in current cluster '{selected_cluster}'...", "warning")
                     start_time = time.time()
-                    response = self.router.completion(
+                    response = await self.router.acompletion(
                         model=selected_cluster,
                         messages=sanitized_messages,
                         **litellm_kwargs
@@ -631,7 +752,7 @@ class LiteLLMProxyRouter:
                     self.log_event(f"[Failover API Dispatch] Cascading to alternate backend '{alt_ep.model}' in '{fallback_cluster}'...", "warning")
                     start_time = time.time()
                     
-                    response = self.router.completion(
+                    response = await self.router.acompletion(
                         model=fallback_cluster,
                         messages=sanitized_messages,
                         **litellm_kwargs

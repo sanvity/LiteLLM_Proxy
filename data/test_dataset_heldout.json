@@ -1,0 +1,1290 @@
+[
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "We have verified the identity of Becky Patterson for clearance.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 33,
+        "end": 48,
+        "value": "Becky Patterson"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "The claim was submitted by Mrs. Amy Smith directly online.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 27,
+        "end": 41,
+        "value": "Mrs. Amy Smith"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "Please confirm the address for Joseph Bond on file.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 31,
+        "end": 42,
+        "value": "Joseph Bond"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "Patrick Smith is authorized to receive communications.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 0,
+        "end": 13,
+        "value": "Patrick Smith"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "The insurance policyholder, Scott Hill, needs assistance.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 28,
+        "end": 38,
+        "value": "Scott Hill"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "Additional information is required from Steven Bray immediately.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 40,
+        "end": 51,
+        "value": "Steven Bray"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "Our representative spoke with Lee Frye about rates.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 30,
+        "end": 38,
+        "value": "Lee Frye"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "The billing statement is addressed to Sandra Wilson.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 38,
+        "end": 51,
+        "value": "Sandra Wilson"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "We are processing a claim for Kaitlin Butler today.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 30,
+        "end": 44,
+        "value": "Kaitlin Butler"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "The adjuster met with Christopher Elliott for inspection.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 22,
+        "end": 41,
+        "value": "Christopher Elliott"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The system administrator has designated Brenda Kemp as the primary recipient for all software updates.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 40,
+        "end": 51,
+        "value": "Brenda Kemp"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "According to the configuration file, Michael Frey is responsible for monitoring the system's performance metrics.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 37,
+        "end": 49,
+        "value": "Michael Frey"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "In order to troubleshoot the issue, Lisa Bailey needs to review the log files from the past 24 hours.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 36,
+        "end": 47,
+        "value": "Lisa Bailey"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "Wendy Wright has been granted permission to access the debug mode, allowing for more detailed error analysis.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 0,
+        "end": 12,
+        "value": "Wendy Wright"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The system error message mentions a file located at Rd.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 52,
+        "end": 54,
+        "value": "Rd"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "A security audit discovered a suspicious login from Road.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 52,
+        "end": 56,
+        "value": "Road"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "Network traffic monitoring detected an unusual connection from Rd.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 63,
+        "end": 65,
+        "value": "Rd"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The software update package was downloaded from Road.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 48,
+        "end": 52,
+        "value": "Road"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The user's session was terminated due to an IP conflict with Road.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 61,
+        "end": 65,
+        "value": "Road"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The system administrator changed the password for user accessing 31509839\t\t  \t\n\t\tJ\fej\tb.Q8f8 Street.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 65,
+        "end": 99,
+        "value": "31509839\t\t  \t\n\t\tJ\fej\tb.Q8f8 Street"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The database query was executed successfully from Ave.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 50,
+        "end": 53,
+        "value": "Ave"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The server log reported an application crash on 56670106513338\n\f\n\u000b\f\n\t\f\r\t\t \r\t\tV0\t9bzHV Street.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 48,
+        "end": 92,
+        "value": "56670106513338\n\f\n\u000b\f\n\t\f\r\t\t \r\t\tV0\t9bzHV Street"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The firewall blocked an incoming request from unknown address 4746872343098 \u000bG9 St.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 62,
+        "end": 82,
+        "value": "4746872343098 \u000bG9 St"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The system configuration file was updated with new values from 12191361939909169\r\u000b\u000b\n  \u000b\n\u000b\f\n  \u000b\f\u000b\t\t\fMJ,b\u000bhQsIfvkU4.m BmN St",
+    "entities": [
+      {
+        "label": "address",
+        "start": 63,
+        "end": 122,
+        "value": "12191361939909169\r\u000b\u000b\n  \u000b\n\u000b\f\n  \u000b\f\u000b\t\t\fMJ,b\u000bhQsIfvkU4.m BmN St"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "Upon reviewing the documentation, it appears the damaged property is located at 8244\n \u000b\n  \u000b\r\f\u000b\t\t \f\u000b\t\t\u000b\n U42BOJT.E Street necessitating further investigation.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 80,
+        "end": 120,
+        "value": "8244\n \u000b\n  \u000b\r\f\u000b\t\t \f\u000b\t\t\u000b\n U42BOJT.E Street"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "A comprehensive analysis of the claim indicates that the subject incident occurred near the premises identified as Avenue.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 115,
+        "end": 121,
+        "value": "Avenue"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "According to the initial assessment, the vehicle in question was parked at the specified location of Ave at the time of the alleged damage.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 101,
+        "end": 104,
+        "value": "Ave"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "Further review of the incident report reveals that the affected party resides at the stated address of Rd, which is a crucial piece of information.",
+    "entities": [
+      {
+        "label": "address",
+        "start": 103,
+        "end": 105,
+        "value": "Rd"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The customer is requesting to cancel a subscription to our monthly newsletter.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The representative asked the caller to provide more details about the issue with their internet connection.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The caller stated that their account was hacked and they need to reset their password immediately.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The representative apologized for the inconvenience caused by the outage and offered a discount on the customer's next bill.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The customer is looking to upgrade their current plan to a premium service that includes additional features.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The representative explained the process for returning a defective product and provided instructions on how to package it for shipping.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The caller was satisfied with the resolution to their issue and thanked the representative for their help.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The customer is experiencing problems with their router and needs assistance troubleshooting the issue.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The representative offered to escalate the customer's issue to a supervisor for further assistance.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "call center audio transcript",
+    "style": "Clean / Standard Sentence",
+    "text": "The caller asked to speak with a manager to discuss a billing dispute and was transferred to the appropriate department.",
+    "entities": [],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "bruceholt@example.org flagged as high-risk patient contact.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 0,
+        "end": 21,
+        "value": "bruceholt@example.org"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "Symptoms reported by howardjessica@example.net include chest pain.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 21,
+        "end": 46,
+        "value": "howardjessica@example.net"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "zdavis@example.org referred for immediate lab testing.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 0,
+        "end": 18,
+        "value": "zdavis@example.org"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "Recent travel history for kdavis@example.net unknown.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 26,
+        "end": 44,
+        "value": "kdavis@example.net"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "davidwalters@example.com shows signs of allergic reaction.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 0,
+        "end": 24,
+        "value": "davidwalters@example.com"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "knewman@example.org experienced severe respiratory distress.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 0,
+        "end": 19,
+        "value": "knewman@example.org"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "Emergency contact for melodypacheco@example.org not listed.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 22,
+        "end": 47,
+        "value": "melodypacheco@example.org"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "john86@example.org prescribed medication for hypertension.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 0,
+        "end": 18,
+        "value": "john86@example.org"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "deborah80@example.org reports history of substance abuse.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 0,
+        "end": 21,
+        "value": "deborah80@example.org"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "medical intake form notes",
+    "style": "Clean / Standard Sentence",
+    "text": "owoods@example.org scheduled for follow-up consultation.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 0,
+        "end": 18,
+        "value": "owoods@example.org"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "qglenn@example.com should receive the lease agreement via email by the end of the week.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 0,
+        "end": 18,
+        "value": "qglenn@example.com"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The property manager will send a reminder to xclark@example.com about the upcoming inspection.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 45,
+        "end": 63,
+        "value": "xclark@example.com"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "norrisjoshua@example.net can review the lease terms and sign the document online.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 0,
+        "end": 24,
+        "value": "norrisjoshua@example.net"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "Please make sure johnwagner@example.com is aware of the rent increase before the renewal date.",
+    "entities": [
+      {
+        "label": "email",
+        "start": 17,
+        "end": 39,
+        "value": "johnwagner@example.com"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The tenant's SSN-659-76-5997-is verified upon lease signing.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 17,
+        "end": 28,
+        "value": "659-76-5997"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The landlord must report 390-28-7611 to the IRS annually.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 25,
+        "end": 36,
+        "value": "390-28-7611"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "Rent payments totaling $1000 will be made under 807-95-1825 number.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 48,
+        "end": 59,
+        "value": "807-95-1825"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The property manager will receive a salary of $50000-243-89-6692.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 53,
+        "end": 64,
+        "value": "243-89-6692"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The lease agreement is binding for 12 months-679-22-1319-years.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 45,
+        "end": 56,
+        "value": "679-22-1319"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The security deposit of $2000 is payable by 676-51-9427 only.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 44,
+        "end": 55,
+        "value": "676-51-9427"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The renter's identification number is 041-56-4180-for verification.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 38,
+        "end": 49,
+        "value": "041-56-4180"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The utility bills will be split according to 064-31-4150 ratio.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 45,
+        "end": 56,
+        "value": "064-31-4150"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The owner's contact information includes 763-29-7941-phone number.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 41,
+        "end": 52,
+        "value": "763-29-7941"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "The lease renewal fee is $500-888-47-6197 per annum.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 30,
+        "end": 41,
+        "value": "888-47-6197"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "We are verifying the 036-95-5857 listed on the application.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 21,
+        "end": 32,
+        "value": "036-95-5857"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "313-86-0454 is not a valid policy number in our system.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 0,
+        "end": 11,
+        "value": "313-86-0454"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "The customer claims to have a 533-85-8084 from 2018.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 30,
+        "end": 41,
+        "value": "533-85-8084"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "insurance claim description",
+    "style": "Clean / Standard Sentence",
+    "text": "Our records show no matching 273-69-2901 for the claim.",
+    "entities": [
+      {
+        "label": "ssn",
+        "start": 29,
+        "end": 40,
+        "value": "273-69-2901"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "academic research survey response",
+    "style": "Clean / Standard Sentence",
+    "text": "During our survey, participants may choose to receive further information via email at their designated 970.820.3914.",
+    "entities": [
+      {
+        "label": "phone",
+        "start": 104,
+        "end": 116,
+        "value": "970.820.3914"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "academic research survey response",
+    "style": "Clean / Standard Sentence",
+    "text": "We would appreciate it if you could provide your +1-577-799-4790x3351 so we can contact you regarding the study's findings.",
+    "entities": [
+      {
+        "label": "phone",
+        "start": 49,
+        "end": 69,
+        "value": "+1-577-799-4790x3351"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "academic research survey response",
+    "style": "Clean / Standard Sentence",
+    "text": "For those who wish to be informed about the survey's outcomes, kindly supply your 292.832.8251x9033 for follow-up communication.",
+    "entities": [
+      {
+        "label": "phone",
+        "start": 82,
+        "end": 99,
+        "value": "292.832.8251x9033"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "academic research survey response",
+    "style": "Clean / Standard Sentence",
+    "text": "In order to facilitate the sharing of results, please enter your phone number, which is your +1-606-513-9441x23905, below.",
+    "entities": [
+      {
+        "label": "phone",
+        "start": 93,
+        "end": 114,
+        "value": "+1-606-513-9441x23905"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "legal contract clause",
+    "style": "Clean / Standard Sentence",
+    "text": "The contract outlines the payment terms, including the email address for the accountant which will be justin56@example.org_neg. ncobb@example.org_neg",
+    "entities": [],
+    "is_hard_negative": true
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "We require all employees to provide their 484229076692 immediately.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 42,
+        "end": 54,
+        "value": "484229076692"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "Please confirm your 345790651066 to activate your new benefits.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 20,
+        "end": 32,
+        "value": "345790651066"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "The security team will reissue your 821656143707 shortly.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 36,
+        "end": 48,
+        "value": "821656143707"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "To reset your password, enter your 538916150327 below.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 35,
+        "end": 47,
+        "value": "538916150327"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "All employees must update their 406352552364 in the system.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 32,
+        "end": 44,
+        "value": "406352552364"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "Your new 176726811657 has been generated and sent to you.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 9,
+        "end": 21,
+        "value": "176726811657"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "Please contact IT to retrieve your lost 950261314384.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 40,
+        "end": 52,
+        "value": "950261314384"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "All sensitive documents require a valid 483450922072 access.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 40,
+        "end": 52,
+        "value": "483450922072"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "Your 661100891573 will be required for the audit process.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 5,
+        "end": 17,
+        "value": "661100891573"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "internal corporate memo",
+    "style": "Clean / Standard Sentence",
+    "text": "To access the secure portal, enter your 844745947806 first.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 40,
+        "end": 52,
+        "value": "844745947806"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "System logs show a spike in calls after a user used 294395439052.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 52,
+        "end": 64,
+        "value": "294395439052"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "Error logs indicate a crash occurred while loading 391987126394 data.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 51,
+        "end": 63,
+        "value": "391987126394"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The audit trail reveals an unusual login attempt from 216128430402.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 54,
+        "end": 66,
+        "value": "216128430402"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "software system trace log",
+    "style": "Clean / Standard Sentence",
+    "text": "The network trace shows a packet sent to IP address 579303623884.",
+    "entities": [
+      {
+        "label": "membership_card",
+        "start": 52,
+        "end": 64,
+        "value": "579303623884"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "government tax filing notes",
+    "style": "Clean / Standard Sentence",
+    "text": "Tax authorities require electronic filers to include Form 1099 information, including recipient's 001-946-815-0362x094_neg, to facilitate accurate processing and minimize discrepancies. (234)397-4018x8529_neg",
+    "entities": [],
+    "is_hard_negative": true
+  },
+  {
+    "domain": "legal contract clause",
+    "style": "Clean / Standard Sentence",
+    "text": "The law firm's official address can be found in the footer section, and all mail should be sent to RoZd by certified mail. K465648236  \n\r\r\u000b\f\r\t\u000b\u000b\n\fp44b\f9Kk\fqLencZSD St",
+    "entities": [],
+    "is_hard_negative": true
+  },
+  {
+    "domain": "real estate lease agreement text",
+    "style": "Clean / Standard Sentence",
+    "text": "Lessor acknowledges Jacob Strickland_neg as authorized lease signer today. Lawrence Thompson_neg",
+    "entities": [],
+    "is_hard_negative": true
+  },
+  {
+    "domain": "legal contract clause",
+    "style": "Clean / Standard Sentence",
+    "text": "When signing up for our premium service, users will need to provide a valid 988738578038_neg to secure their account and receive exclusive benefits. 853931910508_neg",
+    "entities": [],
+    "is_hard_negative": true
+  },
+  {
+    "domain": "government tax filing notes",
+    "style": "Clean / Standard Sentence",
+    "text": "According to Section 9 (c) of the Tax Code, the annual filing deadline for all taxpayers whose Social Security Numbers are 109-08-0845_neg is March 15th of each calendar year. 727-72-9026_neg",
+    "entities": [],
+    "is_hard_negative": true
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "My phone number is Charles Summers and it's not secure.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 19,
+        "end": 34,
+        "value": "Charles Summers"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "Can I call Renee Davis after the meeting?",
+    "entities": [
+      {
+        "label": "name",
+        "start": 11,
+        "end": 22,
+        "value": "Renee Davis"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "The new policy affects all employees except Amanda Wong.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 44,
+        "end": 55,
+        "value": "Amanda Wong"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "Billy Anderson just sent me a funny meme.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 0,
+        "end": 14,
+        "value": "Billy Anderson"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "You need to forward the email to Barbara Bennett immediately.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 33,
+        "end": 48,
+        "value": "Barbara Bennett"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "What's Kimberly Carrillo's new job title, by the way?",
+    "entities": [
+      {
+        "label": "name",
+        "start": 7,
+        "end": 24,
+        "value": "Kimberly Carrillo"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "Benjamin Thompson has been working late nights for weeks.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 0,
+        "end": 17,
+        "value": "Benjamin Thompson"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "The package will be delivered to Jordan Peterson's doorstep.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 33,
+        "end": 48,
+        "value": "Jordan Peterson"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "I'm trying to reach Joseph Washington via social media.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 20,
+        "end": 37,
+        "value": "Joseph Washington"
+      }
+    ],
+    "is_hard_negative": false
+  },
+  {
+    "domain": "General communications",
+    "style": "Clean / Standard Sentence",
+    "text": "Susan Barrett just got engaged to their partner.",
+    "entities": [
+      {
+        "label": "name",
+        "start": 0,
+        "end": 13,
+        "value": "Susan Barrett"
+      }
+    ],
+    "is_hard_negative": false
+  }
+]

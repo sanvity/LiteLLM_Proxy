@@ -1,0 +1,12 @@
+{
+  "enabled": {
+    "jailbreak": true,
+    "toxicity": false,
+    "prompt_injection": false
+  },
+  "action": {
+    "jailbreak": "BLOCK",
+    "toxicity": "BLOCK",
+    "prompt_injection": "BLOCK"
+  }
+}

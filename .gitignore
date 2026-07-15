@@ -11,3 +11,12 @@ venv/
 .DS_Store
 _temp_backup/
 models/
+
+# Generated evaluation artifacts (regenerate with scripts/evaluate.py)
+data/evaluation_data.json
+data/evaluation_report.html
+evaluation_report.html
+
+# IDE / OS
+.vscode/
+.devcontainer/
