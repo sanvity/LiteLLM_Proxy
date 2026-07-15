@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: litellm-pii-proxy-backend:latest
+    container_name: litellm-proxy-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+    command: ["python", "main.py"]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: litellm-pii-proxy-frontend:latest
+    container_name: litellm-proxy-frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - PROXY_URL=http://backend:8000
+    command: ["streamlit", "run", "app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    depends_on:
+      - backend
+    restart: unless-stopped

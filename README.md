@@ -13,6 +13,7 @@
 5. [Installation](#5-installation)
 6. [Environment Configuration](#6-environment-configuration)
 7. [Running the Application](#7-running-the-application)
+   - [Option 4: Running with Docker](#option-4---running-with-docker-persistent-volumes)
 8. [Using the Interfaces](#8-using-the-interfaces)
 9. [Training and Fine-Tuning the PII Model](#9-training-and-fine-tuning-the-pii-model)
 10. [Generating Evaluation Reports](#10-generating-evaluation-reports)
@@ -312,6 +313,29 @@ open "frontend/index.html"
 ```
 
 The dashboard connects directly to the FastAPI backend on port 8000 — so the backend must still be running.
+
+### Option 4 — Running with Docker (Persistent Volumes)
+
+If you have Docker and Docker Compose installed, you can launch both the FastAPI backend and Streamlit frontend in containers with a single command.
+
+#### 1. Configure your environment
+Ensure your `.env` file is set up in the root directory (see [Section 6](#6-environment-configuration)).
+
+#### 2. Start the services
+```bash
+docker compose up --build
+```
+
+This command will automatically:
+- Build a lightweight Docker image using `python:3.11-slim` and the fast package manager `uv`.
+- Launch the FastAPI routing backend on `http://localhost:8000`.
+- Launch the Streamlit admin dashboard on `http://localhost:8501`.
+- Mount your local `./models` and `./data` directories as persistent Docker volumes. Any fine-tuned models, weights, or HTML reports created will reside on your host machine and persist when the containers stop.
+
+#### 3. Stop the services
+```bash
+docker compose down
+```
 
 ---
 

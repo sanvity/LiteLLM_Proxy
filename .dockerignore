@@ -1,0 +1,31 @@
+# Git and IDEs
+.git
+.gitignore
+.vscode
+.devcontainer
+.idea
+.DS_Store
+
+# Python virtual environment and local caches
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ipynb_checkpoints
+
+# Environment secrets
+.env
+.env.example
+
+# Evaluation and run artifacts
+data/evaluation_data.json
+data/evaluation_report.html
+evaluation_report.html
+*.log
+
+# Large local model weights and checkpoints (mount as a volume instead to persist them)
+models/finetuned-deberta/
+models/versions/
+models/
